@@ -11,7 +11,6 @@
 | 维度、坐标和变量名整理 | `datakit.transforms` | `process_xarray.py` |
 | 层与通道转换、归一化和单位缩放 | `datakit.transforms` | `process_xarray.py` |
 | 累计量转增量、重采样和预报步聚合 | `datakit.transforms` | `process_xarray.py` |
-| 序列窗口索引 | `datakit.datasets` | `process_xarray.py` |
 | 空间裁剪和插值 | `datakit.transforms` | `process_xarray.py` |
 | mean/std、差分、时次气候态和分位数 | `datakit.statistics` | `statistics_summary.py` |
 | NaN/Inf、范围、完整年份和 schema 检查 | `datakit.validation` | `statistics_summary.py` |

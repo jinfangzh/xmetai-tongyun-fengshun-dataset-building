@@ -9,7 +9,6 @@
 | NetCDF、GRIB、NumPy、Zarr 本地读写 | `datakit.io` |
 | 坐标、维度、变量、单位和归一化 | `datakit.transforms` |
 | 时间、空间和通道操作 | `datakit.transforms` |
-| 样本窗口索引 | `datakit.datasets` |
 | mean/std、分位数和气候态 | `datakit.statistics` |
 | 差分统计产物 | `pipelines.dataset` |
 | 数值范围、无效值、时间和 schema 检查 | `datakit.validation` |
@@ -30,7 +29,7 @@
 |---|---|
 | 自动格式 dispatch | 已删除，使用 `io.read_netcdf/read_grib/read_numpy/read_zarr` |
 | `resize/crop` | `datakit.transforms` |
-| 连续窗口索引和时间重采样 | `datakit.datasets`、`datakit.transforms` |
+| 时间重采样 | `datakit.transforms` |
 | 雷达 schema 和 reader | `datakit.radar` |
 | Zarr 原子读写 | `datakit.io` |
 | 格式转 Zarr、Zarr 检查和导出 | `pipelines.dataset` |
