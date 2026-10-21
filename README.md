@@ -20,7 +20,6 @@ datakit/
 ├── evaluation/     # 评测数据契约、指标和配对
 ├── schema/         # 通用维度别名和变量元数据
 ├── transforms/     # 坐标、变量、单位、时间和空间转换
-├── datasets/       # 天气样本对象和序列窗口索引
 ├── statistics/     # 描述统计和气候态算法
 ├── validation/     # schema、完整性和数值范围检查
 ├── radar/          # CINRAD/MeteoNet 读取、网格定义和质量控制
@@ -159,7 +158,6 @@ print(dataset)
 | 读取或写入 NetCDF、GRIB、NumPy、Zarr | `datakit.io` |
 | 规范坐标、变量名、单位和归一化 | `datakit.transforms` |
 | 裁剪、插值和重采样 | `datakit.transforms` |
-| 构建天气样本、计算序列窗口索引 | `datakit.datasets` |
 | 计算均值、标准差、分位数和气候态 | `datakit.statistics` |
 | 检查 schema、缺测、时间连续性和数值范围 | `datakit.validation` |
 | 制作可复用 Zarr 数据集产物 | `pipelines.dataset` |

@@ -2,7 +2,6 @@
 
 from . import (
     io,
-    datasets,
     schema,
     transforms,
     statistics,
@@ -13,7 +12,6 @@ from . import (
 
 __all__ = [
     "io",
-    "datasets",
     "schema",
     "transforms",
     "statistics",

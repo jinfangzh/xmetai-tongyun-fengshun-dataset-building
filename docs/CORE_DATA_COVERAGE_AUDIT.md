@@ -16,7 +16,6 @@
 | 坐标、维度和变量名规范化 | `schema`、`transforms` |
 | 归一化、反归一化和单位缩放 | `transforms` |
 | 时序筛选、累计量转增量和重采样 | `transforms.temporal` |
-| 样本序列窗口索引 | `datasets.sequences` |
 | 空间裁剪、插值和分辨率调整 | `transforms.spatial` |
 | mean/std、分位数、月日分位数和时次气候态 | `statistics` |
 | 差分统计产物 | `pipelines.dataset.build_difference_statistics` |

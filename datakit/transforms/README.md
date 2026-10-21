@@ -4,7 +4,7 @@
 
 `transforms` 提供可组合的 xarray 数据变换，包括坐标、变量、单位、时间和空间操作。
 函数处理内存中的数据对象，不负责打开文件或组织数据集产物。
-样本窗口索引属于 `datakit.datasets`，雷达质量控制属于 `datakit.radar`。
+雷达质量控制属于 `datakit.radar`。
 
 ## 模块
 
