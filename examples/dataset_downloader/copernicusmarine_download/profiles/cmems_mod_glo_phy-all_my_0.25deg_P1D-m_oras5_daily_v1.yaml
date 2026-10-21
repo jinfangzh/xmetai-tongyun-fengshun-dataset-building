@@ -1,0 +1,32 @@
+# ORAS5 全球日平均场。日期范围由 Batch 配置，不在 Profile 中重复。
+dataset_id: "cmems_mod_glo_phy-all_my_0.25deg_P1D-m"
+
+# 留空时由 Copernicus Marine 选择当前可用版本、part 和服务。
+# 如需固定历史版本，可取消注释；固定前应先用 describe 核对目录。
+# dataset_version: "202311"
+# dataset_part: "default"
+# service: "arco-geo-series"
+
+variables:
+  - "mlotst_oras"
+  - "siconc_oras"
+  - "sithick_oras"
+  - "so_oras"
+  - "thetao_oras"
+  - "uo_oras"
+  - "vo_oras"
+  - "zos_oras"
+
+longitude:
+  minimum: -180.0
+  maximum: 179.75
+
+latitude:
+  minimum: -80.0
+  maximum: 90.0
+
+depth:
+  minimum: 0.0
+  maximum: 550.0
+
+file_tag: "oras5"

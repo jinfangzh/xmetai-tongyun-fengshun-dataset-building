@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xmetai-datakit"
+version = "0.1.0"
+description = "Focused meteorological data IO and dataset preparation for XMetAI"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "numcodecs>=0.14",
+  "pandas>=1.5",
+  "xarray>=2023.1",
+  "zarr>=3.1.6,<4",
+]
+
+[project.optional-dependencies]
+grib = ["cfgrib>=0.9", "eccodes>=1.6"]
+netcdf = ["h5netcdf[h5py]>=1.2", "netCDF4>=1.6"]
+io = [
+  "cfgrib>=0.9",
+  "eccodes>=1.6",
+  "h5netcdf[h5py]>=1.2",
+  "netCDF4>=1.6",
+]
+parallel = ["dask[array,distributed]>=2023.1"]
+interpolation = ["scipy>=1.10"]
+evaluation = ["scipy>=1.10", "pyyaml>=5.4", "tqdm>=4.60"]
+visualization = ["matplotlib>=3.7", "Pillow>=9.5"]
+test = [
+  "netCDF4>=1.6",
+  "pyyaml>=5.4",
+  "tqdm>=4.60",
+  "matplotlib>=3.7",
+  "Pillow>=9.5",
+  "pytest>=7",
+  "pytest-cov>=4",
+  "scipy>=1.10",
+]
+all = [
+  "cfgrib>=0.9",
+  "dask[array,distributed]>=2023.1",
+  "eccodes>=1.6",
+  "h5netcdf[h5py]>=1.2",
+  "matplotlib>=3.7",
+  "netCDF4>=1.6",
+  "Pillow>=9.5",
+  "scipy>=1.10",
+  "pyyaml>=5.4",
+  "tqdm>=4.60",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["datakit*", "pipelines*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+markers = [
+  "realdata: requires external forecast, observation, or reference archives",
+  "integration: requires external dataset files",
+]

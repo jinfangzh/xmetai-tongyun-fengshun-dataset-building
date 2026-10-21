@@ -1,0 +1,19 @@
+# 土壤：按月下载；本文件供新的通用下载器读取。
+# 每个请求 = 一个变量 × 一个月 × 全部指定时次/气压层。
+dataset: "reanalysis-era5-land"
+product_type:
+  - "reanalysis"
+variable:
+  - "volumetric_soil_water_layer_1"  # vsw1
+  - "volumetric_soil_water_layer_2"  # vsw2
+  - "soil_temperature_level_1"  # sot1
+  - "soil_temperature_level_2"  # sot2
+time:
+  - "00:00"
+  - "06:00"
+  - "12:00"
+  - "18:00"
+# 土壤层已经包含在变量名中，不传 pressure_level。
+area: [10, -90, -10, 90]
+data_format: "netcdf"
+download_format: "zip"

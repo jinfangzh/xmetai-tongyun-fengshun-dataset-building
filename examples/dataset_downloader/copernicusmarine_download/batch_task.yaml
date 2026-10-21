@@ -1,0 +1,16 @@
+profiles:
+  - path: "./profiles/cmems_mod_glo_phy-all_my_0.25deg_P1D-m_oras5_daily_v1.yaml"
+    output_subdir: "oras5_daily"
+
+storage:
+  root_path: "./copernicusmarine_data"
+
+period:
+  start_date: "1993-01-01"
+  end_date: "1993-01-03"
+
+execution:
+  max_workers: 1
+  max_retries: 5
+  retry_delay_seconds: 30
+  continue_on_error: true

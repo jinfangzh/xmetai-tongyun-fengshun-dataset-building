@@ -1,0 +1,309 @@
+"""Diamond station file discovery and decoding, independent of evaluation."""
+
+import logging
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import numpy as np
+import xarray as xr
+from tqdm import tqdm
+
+from datakit.io.readers.errors import SourceDecodeError, SourceDiscoveryError
+from datakit.runtime.memory import peak_rss_text
+
+log = logging.getLogger(__name__)
+
+class DiamondStationFiles:
+    """
+    Diamond 站点文件目录
+
+    扫描 station_dir/YYYYMMDD/HH.000 文件。
+    """
+
+    def __init__(self, station_dir: Path, station_whitelist: Optional[List[int]] = None):
+        """
+        Args:
+            station_dir: 站点数据根目录
+            station_whitelist: 站点白名单（站号列表），None 表示全部站点
+        """
+        self.station_dir = Path(station_dir)
+        self.station_whitelist = set(station_whitelist) if station_whitelist else None
+
+    def file_time(self, path) -> datetime:
+        """文件对应的观测时刻（供调用方按时间窗口筛选文件）。"""
+        return parse_station_file_time(path)
+
+    def discover_files(self, source_id: str = "") -> List[Path]:
+        """
+        发现指定时间范围的站点文件
+
+        支持两种布局：
+        1. 扁平布局：所有 .000 文件直接在 station_dir 下（如 YYYYMMDDHH.000）
+        2. 分层布局：station_dir/YYYYMMDD/HH.000
+
+        Args:
+            request: 数据请求
+
+        Returns:
+            DataIndex，available 包含文件路径列表
+        """
+        if not self.station_dir.exists():
+            raise SourceDiscoveryError(
+                f"Station directory does not exist: {self.station_dir}",
+                source_id=source_id,
+            )
+
+        # 首先尝试扁平布局：直接查找 .000 文件
+        flat_files = sorted(self.station_dir.glob("*.000"))
+
+        if flat_files:
+            # 扁平布局
+            return flat_files
+
+        # 尝试分层布局：扫描日期子目录
+        date_dirs = sorted([d for d in self.station_dir.iterdir()
+                           if d.is_dir() and d.name.isdigit()])
+
+        if not date_dirs:
+            raise SourceDiscoveryError(
+                f"No .000 files or date directories found in {self.station_dir}",
+                source_id=source_id,
+            )
+
+        # 收集所有 .000 文件
+        all_files = []
+        for date_dir in date_dirs:
+            files = sorted(date_dir.glob("*.000"))
+            all_files.extend(files)
+
+        if not all_files:
+            raise SourceDiscoveryError(
+                f"No .000 files found in {self.station_dir}",
+                source_id=source_id,
+            )
+
+        return all_files
+
+
+class DiamondStationDatasetReader:
+    """
+    Diamond 格式站点观测 Reader
+
+    读取多个小时文件，拼接为时间序列。
+
+    输出：xr.Dataset with dims (time, station)
+    coords: time, station_id, lat, lon, altitude
+    data_vars: precipitation (mm)
+    """
+
+    def __init__(
+        self,
+        source_id: str = "diamond_station",
+        version: str = "1.0.0",
+        station_whitelist: Optional[List[int]] = None,
+    ):
+        self.source_id = source_id
+        self.station_whitelist = (
+            set(int(station_id) for station_id in station_whitelist)
+            if station_whitelist
+            else None
+        )
+
+    def read_files(self, files: List[Path]) -> tuple[xr.Dataset, List[str]]:
+        """
+        读取站点文件并拼接为 xarray Dataset
+
+        Args:
+            request: 数据请求
+            index: 文件索引
+
+        Returns:
+            DataBundle(kind=STATION_OBSERVATION)
+        """
+        if not files:
+            raise SourceDecodeError("No files in index", source_id=self.source_id)
+
+        # 使用参考实现同样的 NumPy 路径组装二维站点数组。
+        # 不把所有时次拼成超大 DataFrame，也不使用 pandas Python engine。
+        parsed = []
+        total = len(files)
+        # tqdm 只写 stderr、原地刷新，重定向到日志文件就什么都看不见；整段
+        # 全年观测要解析几分钟到几十分钟，没有落进日志的进度行就会被当成卡死。
+        # 小批量（按块现读现弃时一次几十个文件）不值得逐条刷屏，那时只留首尾。
+        step = max(1, total // 20) if total >= 200 else 0
+        log.info(
+            "站点观测读取 %d 个文件（白名单 %s 个站）……",
+            total,
+            len(self.station_whitelist) if self.station_whitelist else "不限",
+        )
+        started = time.perf_counter()
+        # 解析结果全部攒在 parsed 里、读完才拼稠密数组，所以这个累计值就是
+        # 读取阶段的真实内存成本（远超最后留下的那个二维数组）。
+        held_bytes = 0
+        pbar = tqdm(
+            files,
+            desc="解析站点文件",
+            unit="文件",
+            ncols=100,
+        )
+        for done, fpath in enumerate(pbar, start=1):
+            try:
+                item = self._parse_diamond_file(fpath)
+                if item is not None:
+                    parsed.append(item)
+                    held_bytes += sum(
+                        item[key].nbytes
+                        for key in ("station_id", "lon", "lat", "altitude", "precipitation")
+                    )
+            except Exception as exc:
+                raise SourceDecodeError(
+                    f"Failed to parse station file {fpath}: {exc}",
+                    source_id=self.source_id,
+                    path=str(fpath),
+                    cause=exc,
+                ) from exc
+            if step and (done % step == 0 or done == total):
+                log.info(
+                    "解析站点文件 %d/%d（%.0f%%），已用 %.1fs，已解析累计 %.2f GB，"
+                    "进程峰值 RSS %s",
+                    done,
+                    total,
+                    100.0 * done / total,
+                    time.perf_counter() - started,
+                    held_bytes / 1024**3,
+                    peak_rss_text(),
+                )
+        pbar.close()
+
+        if not parsed:
+            raise SourceDecodeError("No valid station data parsed", source_id=self.source_id)
+
+        time_index = sorted(item["time"] for item in parsed)
+        station_ids = set()
+        for item in parsed:
+            station_ids.update(int(sid) for sid in item["station_id"])
+        station_index = np.asarray(sorted(station_ids), dtype="i8")
+        if station_index.size == 0:
+            raise SourceDecodeError("No stations in requested files", source_id=self.source_id)
+
+        n_times = len(parsed)
+        n_stations = len(station_index)
+        # 用 float64：站点降水量在阈值附近需要与参考实现同等精度
+        # （float32 会让个别站点在 4mm 之类的阈值上翻转，进而影响 BSS/AROC）
+        precip_data = np.full((n_times, n_stations), np.nan, dtype="f8")
+        lat_data = np.full(n_stations, np.nan, dtype="f8")
+        lon_data = np.full(n_stations, np.nan, dtype="f8")
+        alt_data = np.full(n_stations, np.nan, dtype="f8")
+        station_map = {int(sid): i for i, sid in enumerate(station_index)}
+
+        filled = np.zeros(n_stations, dtype=bool)
+        for time_idx, item in enumerate(parsed):
+            source_positions = np.asarray(
+                [i for i, sid in enumerate(item["station_id"]) if int(sid) in station_map],
+                dtype="i8",
+            )
+            positions = np.asarray(
+                [station_map[int(item["station_id"][i])] for i in source_positions],
+                dtype="i8",
+            )
+            precip_data[time_idx, positions] = item["precipitation"][source_positions]
+            # 站点元数据取"首次出现的时次"，而不是只看第一个时次：
+            # 否则晚出现（或首时次缺报）的站点经纬度会是 NaN，被区域筛选误剔除。
+            pending = ~filled[positions]
+            if pending.any():
+                source_keep = source_positions[pending]
+                targets = positions[pending]
+                lat_data[targets] = item["lat"][source_keep]
+                lon_data[targets] = item["lon"][source_keep]
+                alt_data[targets] = item["altitude"][source_keep]
+                filled[targets] = True
+
+        # 统一按时间排序；Catalog 通常已经排序，但不能依赖文件系统顺序。
+        order = np.argsort(np.asarray(time_index))
+        precip_data = precip_data[order]
+        time_index = [time_index[i] for i in order]
+
+        log.info(
+            "站点观测读取完成：%d/%d 个文件，%d 个时次 × %d 个站，"
+            "稠密数组 %.2f GB，总耗时 %.1fs，进程峰值 RSS %s",
+            len(parsed),
+            total,
+            n_times,
+            n_stations,
+            precip_data.nbytes / 1024**3,
+            time.perf_counter() - started,
+            peak_rss_text(),
+        )
+
+        ds = xr.Dataset(
+            {"precipitation": (["time", "station"], precip_data)},
+            coords={
+                "time": time_index,
+                "station": station_index,
+                "station_id": ("station", station_index),
+                "lat": ("station", lat_data),
+                "lon": ("station", lon_data),
+                "altitude": ("station", alt_data),
+            },
+        )
+        ds["precipitation"].attrs.update(units="mm", long_name="Hourly precipitation")
+
+        return ds, [str(item["path"]) for item in parsed]
+
+    def _parse_diamond_file(self, fpath: Path) -> Optional[Dict[str, Any]]:
+        """
+        解析单个 Diamond 文件
+
+        支持两种文件名格式：
+        1. YYYYMMDDHH.000 - 扁平布局
+        2. HH.000 - 分层布局（需要从父目录名获取日期）
+
+        Args:
+            fpath: 文件路径
+
+        Returns:
+            {'time': datetime, 'df': DataFrame} 或 None（文件无效）
+        """
+        try:
+            obs_time = parse_station_file_time(fpath)
+        except ValueError:
+            return None
+
+        # 参考实现使用 NumPy 直接读取数值列，避免 pandas Python engine 的开销。
+        rows = np.loadtxt(fpath, skiprows=2, encoding="gbk", ndmin=2)
+        if rows.shape[1] < 5:
+            raise ValueError("数据列不足 5 列")
+        if rows.shape[0] == 0:
+            return None
+        if self.station_whitelist is not None:
+            rows = rows[np.isin(rows[:, 0].astype("i8"), list(self.station_whitelist))]
+            if rows.shape[0] == 0:
+                return None
+        order = np.argsort(rows[:, 0].astype("i8"))
+        rows = rows[order]
+        return {
+            "path": fpath,
+            "time": obs_time,
+            "station_id": rows[:, 0].astype("i8"),
+            "lon": rows[:, 1].astype("f8"),
+            "lat": rows[:, 2].astype("f8"),
+            "altitude": rows[:, 3].astype("f8"),
+            "precipitation": rows[:, 4].astype("f8"),
+        }
+
+def parse_station_file_time(path: Path) -> datetime:
+    """解析 Diamond 站点文件的观测时刻。
+
+    支持两种命名：``station_dir/YYYYMMDDHH.000`` 与 ``station_dir/YYYYMMDD/HH.000``。
+    """
+    path = Path(path)
+    name = path.stem
+    if len(name) == 10 and name.isdigit():
+        return datetime.strptime(name, "%Y%m%d%H")
+    if len(name) == 2 and name.isdigit() and path.parent.name.isdigit():
+        return datetime.strptime(path.parent.name + name, "%Y%m%d%H")
+    raise ValueError(f"无法解析观测文件时间: {path}")
+
+

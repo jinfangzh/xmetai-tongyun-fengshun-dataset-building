@@ -1,0 +1,24 @@
+# 云与辐射：按月下载；本文件供新的通用下载器读取。
+# 相对输出路径约定以本 YAML 所在目录为基准。
+# 每个请求 = 一个变量 × 一个月 × 全部指定时次/气压层。
+dataset: "reanalysis-era5-single-levels"
+product_type:
+  - "reanalysis"
+variable:
+  - "low_cloud_cover"  # lcc
+  - "medium_cloud_cover"  # mcc
+  - "high_cloud_cover"  # hcc
+  - "total_cloud_cover"  # tcc
+  - "surface_net_solar_radiation"  # ssr
+  - "surface_solar_radiation_downwards"  # ssrd
+  - "total_sky_direct_solar_radiation_at_surface"  # fdir
+  - "top_net_thermal_radiation"  # ttr
+time:
+  - "00:00"
+  - "06:00"
+  - "12:00"
+  - "18:00"
+# time 仅选择时次，不会把降水/辐射自动聚合成 6 小时累积量。
+area: [10, -90, -10, 90]
+data_format: "netcdf"
+download_format: "zip"

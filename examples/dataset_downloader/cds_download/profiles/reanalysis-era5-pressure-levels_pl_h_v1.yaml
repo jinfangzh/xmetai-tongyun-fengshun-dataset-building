@@ -1,0 +1,36 @@
+# 气压层：按月下载；本文件供新的通用下载器读取。
+# 相对输出路径约定以本 YAML 所在目录为基准。
+# 每个请求 = 一个变量 × 一个月 × 全部指定时次/气压层。
+dataset: "reanalysis-era5-pressure-levels"
+product_type:
+  - "reanalysis"
+variable:
+  - "geopotential"  # z
+  - "temperature"  # t
+  - "u_component_of_wind"  # u
+  - "v_component_of_wind"  # v
+  - "vertical_velocity"  # w
+  - "specific_humidity"  # q
+time:
+  - "00:00"
+  - "06:00"
+  - "12:00"
+  - "18:00"
+pressure_level:
+  - "1000"
+  - "925"
+  - "850"
+  - "700"
+  - "600"
+  - "500"
+  - "400"
+  - "300"
+  - "250"
+  - "200"
+  - "150"
+  - "100"
+  - "50"
+  - "10"
+area: null
+data_format: "netcdf"
+download_format: "unarchived"

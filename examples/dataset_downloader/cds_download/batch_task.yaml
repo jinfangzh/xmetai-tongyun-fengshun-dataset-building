@@ -1,0 +1,18 @@
+profiles:
+  - path: "./profiles/reanalysis-era5-pressure-levels_pl_h_v1.yaml"
+    output_subdir: "pl_h6_v1"
+  - path: "./profiles/reanalysis-era5-land_soil_h6_v1.yaml"
+    output_subdir: "soil"
+
+storage:
+  root_path: "./era5_download"
+
+period:
+  start_month: "2014-01"
+  end_month: "2014-02"
+
+execution:
+  max_workers: 1
+  max_retries: 5000
+  retry_delay_seconds: 30
+  continue_on_error: true

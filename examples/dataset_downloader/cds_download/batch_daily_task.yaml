@@ -1,0 +1,23 @@
+# 手动修改月份；不会自动选择最近月份。
+profiles:
+- path: ./profiles/derived-era5-single-levels-daily-statistics_sfc_v1.yaml
+  output_subdir: sfc
+
+- path: ./profiles/derived-era5-single-levels-daily-statistics_t2m_v1.yaml
+  output_subdir: t2m
+
+- path: ./profiles/derived-era5-pressure-levels-daily-statistics_pl_v1.yaml
+  output_subdir: pl
+
+storage:
+  root_path: ./era5_download/daily
+
+period:
+  start_month: 2014-01
+  end_month: 2014-02
+
+execution:
+  max_workers: 1
+  max_retries: 3
+  retry_delay_seconds: 30
+  continue_on_error: true

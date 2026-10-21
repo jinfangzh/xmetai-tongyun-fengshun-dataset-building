@@ -1,0 +1,50 @@
+{
+  "profile": "examples/validation/profiles/era5_land_c8_1p5_h24.json",
+  "memory_budget_mib": 2048,
+  "dataset": {
+    "hist_frames": 1,
+    "fcst_frames": [
+      1
+    ],
+    "freq": 24,
+    "years": [
+      "20240101",
+      "20240105"
+    ],
+    "training": false,
+    "lat_flip": false,
+    "return_valid_mask": true,
+    "in_names": [
+      "stl1",
+      "stl2",
+      "stl3",
+      "stl4",
+      "swvl1",
+      "swvl2",
+      "swvl3",
+      "swvl4"
+    ],
+    "target_names": [
+      "stl1",
+      "stl2",
+      "stl3",
+      "stl4",
+      "swvl1",
+      "swvl2",
+      "swvl3",
+      "swvl4"
+    ]
+  },
+  "expected_land_names": [
+    "stl1",
+    "stl2",
+    "stl3",
+    "stl4",
+    "swvl1",
+    "swvl2",
+    "swvl3",
+    "swvl4"
+  ],
+  "expected_sea_names": [],
+  "model_evidence": null
+}

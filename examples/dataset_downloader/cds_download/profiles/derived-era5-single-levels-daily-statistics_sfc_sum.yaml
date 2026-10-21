@@ -1,0 +1,14 @@
+# 日统计：一个变量 × 一个月；服务端返回 NetCDF ZIP。
+# 保留旧下载器变量选择；frequency 是统计输入采样频率。
+dataset: derived-era5-single-levels-daily-statistics
+product_type: reanalysis
+variable:
+- total_precipitation
+- surface_net_solar_radiation
+- surface_solar_radiation_downwards
+- top_net_thermal_radiation
+- total_sky_direct_solar_radiation_at_surface
+daily_statistic: daily_sum
+time_zone: utc+00:00
+frequency: 1_hourly
+area: null

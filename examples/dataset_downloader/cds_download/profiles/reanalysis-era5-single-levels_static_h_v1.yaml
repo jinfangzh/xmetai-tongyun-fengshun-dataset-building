@@ -1,0 +1,20 @@
+# 静态场：按月下载；本文件供新的通用下载器读取。
+# 相对输出路径约定以本 YAML 所在目录为基准。
+# 每个请求 = 一个变量 × 一个月 × 全部指定时次/气压层。
+dataset: "reanalysis-era5-single-levels"
+product_type:
+  - "reanalysis"
+variable:
+  - "land_sea_mask"  # lsm
+  - "slope_of_sub_gridscale_orography"  # slor
+  - "standard_deviation_of_orography"  # sdor
+  - "geopotential"  # z_sfc
+time:
+  - "00:00"
+  - "06:00"
+  - "12:00"
+  - "18:00"
+area: [10, -90, -10, 90]
+data_format: "netcdf"
+download_format: "zip"
+# 为统一月度流程，此组也按月请求；静态场通常无需每月重复下载。

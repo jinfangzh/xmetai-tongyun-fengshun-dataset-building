@@ -1,0 +1,44 @@
+{
+  "profile_version": "1.6",
+  "profile_status": "approved",
+  "dataset_id": "s2s.1950_2026.c76.1p5.h24.v1",
+  "directory_name": "s2s.19500101_20260417.c76.1p5.h24.v1",
+  "product_id": "s2s.c76",
+  "product_version": "1.0",
+  "variant_id": "1p5.h24",
+  "dataset_path": "/workspace/data/zarr_refresh_v3/s2s.19500101_20260417.c76.1p5.h24.v1",
+  "auxiliary_directory": "/workspace/data/zarr_refresh_v3/s2s.19500101_20260417.c76.1p5.h24.v1",
+  "contract_version": "1.0",
+  "schema_version": "2.0",
+  "content_version": "v3",
+  "zarr_format": 3,
+  "data_revision": "20260921",
+  "expected_time": {
+    "first": "1950-01-01T00:00:00.000000000",
+    "last": "2026-04-17T00:00:00.000000000",
+    "count": 27866
+  },
+  "quality": [],
+  "mask_provenance": null,
+  "auxiliary_provenance": {
+    "weight.npy": "Review 2026-10-13: complete float32 latitude weight vector has declared axis (1,lat,1) and agrees with mean-normalized cos(latitude) within 5e-7; frozen source/coordinate evidence: docs/validation/PRODUCT_BASELINE_2026-10-13.json"
+  },
+  "confirmed_optional_roles": {},
+  "semantic_confirmation": null,
+  "identity_mapping_evidence": "Owner-designated refresh baseline, reviewed 2026-10-13: directory s2s.19500101_20260417.c76.1p5.h24.v1 maps to root dataset_id s2s.1950_2026.c76.1p5.h24.v1; full time coordinates independently checked. Label does not override actual coverage. Evidence: docs/validation/IDENTITY_BASELINE_2026-10-13.json",
+  "snapshot_id": null,
+  "production_evidence": null,
+  "allowed_omitted": [],
+  "consumer_required": false,
+  "conversion_required": false,
+  "notes": [
+    "本版仅批准已确认的格式、通道顺序、网格、时间、统计声明、内嵌掩膜、辅助结构及存储原值完整性规则。",
+    "通道顺序按用户指定的现有 refresh 基准冻结；CRA c71 纬度南到北，其余北到南。",
+    "quick 仅验收预定抽样；生产冻结证明属于 full 完成条件。",
+    "NaN 比例、有限值范围和常数场仅记录诊断，不设验收阈值。"
+  ],
+  "valid_regions": {},
+  "valid_region_provenance": {},
+  "mask_derivation": null,
+  "validation_scope": "confirmed-format"
+}

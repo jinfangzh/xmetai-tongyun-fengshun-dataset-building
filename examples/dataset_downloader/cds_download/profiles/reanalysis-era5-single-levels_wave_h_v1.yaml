@@ -1,0 +1,28 @@
+# 海浪：按月下载；本文件供新的通用下载器读取。
+# 相对输出路径约定以本 YAML 所在目录为基准。
+# 每个请求 = 一个变量 × 一个月 × 全部指定时次/气压层。
+dataset: "reanalysis-era5-single-levels"
+product_type:
+  - "reanalysis"
+variable:
+  - "model_bathymetry"  # wmb
+  - "significant_height_of_combined_wind_waves_and_swell"  # swh
+  - "mean_wave_direction"  # mwd
+  - "mean_wave_period"  # mwp
+  - "coefficient_of_drag_with_waves"  # cdww
+time:
+  - "00:00"
+  - "06:00"
+  - "12:00"
+  - "18:00"
+area: [10, -90, -10, 90]
+data_format: "netcdf"
+download_format: "zip"
+
+# 原清单标记为 pending_special_source，以下不作为下载任务：
+# - significant_wave_height_of_10_to_12s_waves
+# - significant_wave_height_of_12_to_14s_waves
+# - significant_wave_height_of_14_to_17s_waves
+# - significant_wave_height_of_17_to_21s_waves
+# - significant_wave_height_of_21_to_25s_waves
+# - significant_wave_height_of_25_to_30s_waves

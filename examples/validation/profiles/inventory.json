@@ -1,0 +1,15 @@
+{
+  "inventory_version": "1.0",
+  "profiles": [
+    "cra_c71_p25_h6.json",
+    "cra_c87_p25_h24.json",
+    "cra_c87_1p5_h24.json",
+    "era5_c87_p25_h24.json",
+    "era5_c78_p25_h6.json",
+    "era5_c116_p25_h6.json",
+    "era5_land_c8_1p5_h24.json",
+    "oras5_c88_1p5_h24.json",
+    "oras5_c88_p25_h24.json",
+    "s2s_c76_1p5_h24.json"
+  ]
+}

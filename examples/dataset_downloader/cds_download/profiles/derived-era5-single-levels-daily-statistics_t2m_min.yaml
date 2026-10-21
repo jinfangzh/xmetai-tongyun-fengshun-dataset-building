@@ -1,0 +1,11 @@
+# 日统计：一个变量 × 一个月；服务端返回 NetCDF ZIP。
+# 保留旧下载器变量选择；frequency 是统计输入采样频率。
+# 使用原配置的 since_previous_post_processing 变量；不同于对 2m_temperature 直接求极值。
+dataset: derived-era5-single-levels-daily-statistics
+product_type: reanalysis
+variable:
+- minimum_2m_temperature_since_previous_post_processing
+daily_statistic: daily_min
+time_zone: utc+00:00
+frequency: 1_hourly
+area: null

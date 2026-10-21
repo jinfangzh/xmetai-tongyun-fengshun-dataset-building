@@ -1,0 +1,28 @@
+# 日统计：一个变量 × 一个月；服务端返回 NetCDF ZIP。
+# 保留旧下载器变量选择；frequency 是统计输入采样频率。
+dataset: derived-era5-pressure-levels-daily-statistics
+product_type: reanalysis
+variable:
+- geopotential
+- specific_humidity
+- temperature
+- u_component_of_wind
+- v_component_of_wind
+daily_statistic: daily_mean
+time_zone: utc+00:00
+frequency: 1_hourly
+area: null
+pressure_level:
+- '50'
+- '100'
+- '150'
+- '200'
+- '250'
+- '300'
+- '400'
+- '500'
+- '600'
+- '700'
+- '850'
+- '925'
+- '1000'

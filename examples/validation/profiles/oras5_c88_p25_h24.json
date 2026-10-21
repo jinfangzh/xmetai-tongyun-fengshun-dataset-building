@@ -1,0 +1,42 @@
+{
+  "profile_version": "1.6",
+  "profile_status": "approved",
+  "dataset_id": "oras5.1993_2024.c88.p25.h24.v1",
+  "directory_name": "oras5.1993_2024.c88.p25.h24.v1",
+  "product_id": "oras5.c88",
+  "product_version": "1.0",
+  "variant_id": "p25.h24",
+  "dataset_path": "/workspace/data/zarr_refresh_v3/oras5.1993_2024.c88.p25.h24.v1",
+  "auxiliary_directory": "/workspace/data/zarr_refresh_v3/oras5.1993_2024.c88.p25.h24.v1",
+  "contract_version": "1.0",
+  "schema_version": "2.0",
+  "content_version": "v3",
+  "zarr_format": 3,
+  "data_revision": "20260923",
+  "expected_time": {
+    "first": "1993-01-01T00:00:00.000000000",
+    "last": "2024-12-31T00:00:00.000000000",
+    "count": 11688
+  },
+  "quality": [],
+  "mask_provenance": null,
+  "auxiliary_provenance": {},
+  "confirmed_optional_roles": {},
+  "semantic_confirmation": null,
+  "identity_mapping_evidence": null,
+  "snapshot_id": null,
+  "production_evidence": null,
+  "allowed_omitted": [],
+  "consumer_required": false,
+  "conversion_required": false,
+  "notes": [
+    "本版仅批准已确认的格式、通道顺序、网格、时间、统计声明、内嵌掩膜、辅助结构及存储原值完整性规则。",
+    "通道顺序按用户指定的现有 refresh 基准冻结；CRA c71 纬度南到北，其余北到南。",
+    "quick 仅验收预定抽样；生产冻结证明属于 full 完成条件。",
+    "NaN 比例、有限值范围和常数场仅记录诊断，不设验收阈值。"
+  ],
+  "valid_regions": {},
+  "valid_region_provenance": {},
+  "mask_derivation": null,
+  "validation_scope": "confirmed-format"
+}
