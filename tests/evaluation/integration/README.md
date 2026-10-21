@@ -81,7 +81,7 @@ python -m pytest tests/evaluation/integration -m realdata -v -rs
 
 测试配置由 `pipelines.evaluation.config.load_config()` 从
 `examples/evaluation/configs/` 加载。`weather_*` 配置声明数据源、
-指标及执行设置；`weather_ts_single_fgvp` 的集成测试使用单日 fixture。
+指标及执行设置；`weather_ts_single_tongyun` 的集成测试使用单日 fixture。
 多时段 `periods` 支持：配置与声明透传，按各段候选起报日的并集发现预报，
 不探测空档日期。`periods` 与 `start_date/end_date` 同时给出会报配置错误。
 测试会覆盖实际起报范围、输出位置和执行模式。

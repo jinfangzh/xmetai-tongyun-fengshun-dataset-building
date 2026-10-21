@@ -18,7 +18,7 @@ python -m pipelines.evaluation --config fdp_precip_ens_fengqing
 通用示例入口支持单个 `cfg` 和批量 `cfgs`，适用于各模型配置：
 
 ```bash
-python -m examples.evaluation.run_evaluation --config weather_ts_single_fgvp
+python -m examples.evaluation.run_evaluation --config weather_ts_single_tongyun
 # 显式开启报告
 python -m examples.evaluation.run_evaluation --config weather_rmse_single_fuxi --report
 ```

@@ -3,7 +3,7 @@
 Example from the repository root::
 
     python -m examples.evaluation.run_evaluation \
-        --config weather_ts_single_fgvp
+        --config weather_ts_single_tongyun
 
 The selected config supplies the pipeline, variables, metrics, and time range.
 """
