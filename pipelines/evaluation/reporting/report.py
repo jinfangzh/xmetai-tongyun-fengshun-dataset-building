@@ -1,101 +1,443 @@
-"""Generate a basic Markdown report and plots from finalized evaluation scores."""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""读取评测产物并选择 TS、连续场或台风报告。
+
+身份取自 manifest 的 resolved_config.pipeline；旧产物使用 protocol_id 与
+metrics 的组合判定。没有对应模板时明确报错，不根据目录名推断。
+
+公开入口为 build_report；命令行使用 python -m pipelines.evaluation.reporting。
+"""
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
+from typing import Dict, Optional, Sequence
+
+from ._metadata import manifest_info_from, region_labels_from
+
+#: 已经有报告模板的能力：流程名 -> 所属**报告家族**。
+#: 同一家族的流程共用一套模板与图表，因为它们写出的产物表结构相同
+#: （三条 TS 流程都写 ``diagnostics/categorical_wide.csv``）。
+IMPLEMENTED: Dict[str, str] = {
+    "weather_field_scores": "field",
+    "weather_ts_det": "ts",
+    "weather_ts_ens": "ts",
+    "fdp_precip_ts": "ts",
+    "weather_typhoon_det": "typhoon",
+    "weather_typhoon_ens": "typhoon",
+}
+
+#: 家族 -> 一句话说明，只用于日志与报错信息。
+FAMILY_LABELS: Dict[str, str] = {
+    "field": "确定性连续场检验（RMSE / ACC / 活跃度 / 纬向谱）",
+    "ts": "站点降水分类检验（TS / POD / FAR / 频率偏差）",
+    "typhoon": "台风路径、分量与强度误差（逐指标逐时效严格配对）",
+}
+
+#: 退路判据 ``(流程名, protocol_id, 指标名集合)``，只在 manifest 里没有
+#: ``resolved_config.pipeline`` 时启用；指标集合要求**完全相等**，
+#: 多一个少一个都不算（``weather_ens_field_scores`` 就是多一个 ``crps``）。
+_FALLBACK_RULES = (
+    (
+        "weather_field_scores",
+        "grid_valid_time",
+        frozenset({"rmse", "acc", "activity", "zonal_spectrum"}),
+    ),
+    # det / ens / fdp 三类 TS 产物在这组判据下区分不开，但三者同属 "ts" 家族、
+    # 共用一套模板，所以落到哪个名字上都不影响出什么报告。
+    ("weather_ts_det", "station_valid_time", frozenset({"ts"})),
+)
+
+CATEGORICAL_WIDE_RELATIVE_PATH = Path("diagnostics") / "categorical_wide.csv"
+
+#: 集合产物的概率评分宽表（``weather_ts_ens_prob`` 那一段写出）。确定性产物没有
+#: 这个文件，对比模型旁边也未必有——两处都是**有就用、没有就跳过**，不是错误。
+PROBABILITY_WIDE_RELATIVE_PATH = Path("diagnostics") / "probability_wide.csv"
+
+
+def parse_compare_specs(specs: Optional[Sequence[str]]) -> Dict[str, Path]:
+    """把 ``["FuXi=a.csv", "AIFS=b.csv"]`` 解析成 ``{名字: 路径}``。
+
+    对比模型**只能是裸结果表**，不能是产物目录——它们没有 manifest，
+    认不出能力，名字也没法从 ``run_id`` 推断（``ts_multi_*`` 那几个目录就是这种）。
+    名字由调用方显式给出，不从目录名猜：这个仓库的规矩是身份不靠目录名。
+
+    Raises:
+        ValueError: 条目没有 ``=``，或文件不存在。
+    """
+    parsed: Dict[str, Path] = {}
+    for spec in specs or []:
+        name, separator, raw_path = str(spec).partition("=")
+        name, raw_path = name.strip(), raw_path.strip()
+        if not separator or not name or not raw_path:
+            raise ValueError(
+                f"--compare 的写法是「名字=CSV路径」，收到的是 {spec!r}。"
+                f"例：--compare \"FuXi=evaluation_results/ts_multi_fuxi/ts_fuxi_2025.csv\""
+            )
+        path = Path(raw_path)
+        if not path.is_file():
+            raise ValueError(f"--compare 里的 {name} 指向的 {path} 不存在")
+        parsed[name] = path
+    return parsed
+
+
+def load_manifest(output_dir: Path) -> Dict[str, object]:
+    """读产物目录里的 ``manifest.json``。
+
+    Raises:
+        ValueError: 文件不存在或不是合法 JSON。
+    """
+    path = Path(output_dir) / "manifest.json"
+    if not path.is_file():
+        raise ValueError(
+            f"{path} 不存在：这里看着不像评测产物目录。"
+            f"该给的是 ``--config`` 的 output_dir（里面有 scores.csv 和 manifest.json）。"
+        )
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{path} 不是合法 JSON：{error}") from error
+
+
+def detect_capability(output_dir: Path) -> str:
+    """认出产物目录属于哪条流程。
+
+    Raises:
+        ValueError: 目录里没有 manifest，或认不出 / 认得但没有报告模板。
+    """
+    return _capability_from_manifest(load_manifest(Path(output_dir)))
+
+
+def _capability_from_manifest(manifest: dict) -> str:
+    resolved = manifest.get("resolved_config")
+    pipeline = resolved.get("pipeline") if isinstance(resolved, dict) else None
+    if pipeline:
+        if str(pipeline) in IMPLEMENTED:
+            return str(pipeline)
+        raise ValueError(
+            f"流程 '{pipeline}' 的报告模板还没做"
+            f"（已有模板的流程：{'、'.join(sorted(IMPLEMENTED))}）。"
+            f"产物本身是完整的，只是没有对应的出图与报告代码。"
+        )
+
+    protocol = str(manifest.get("protocol_id") or "")
+    metrics = frozenset(str(name) for name in (manifest.get("metrics") or []))
+    for name, want_protocol, want_metrics in _FALLBACK_RULES:
+        if protocol == want_protocol and metrics == want_metrics:
+            return name
+    raise ValueError(
+        f"认不出这个产物属于哪条流程：manifest 里既没有 `resolved_config.pipeline`，"
+        f"`protocol_id={protocol!r}` + `metrics={sorted(metrics)}` 也不匹配任何已知判据。"
+        f"已有模板的流程：{'、'.join(sorted(IMPLEMENTED))}。"
+    )
+
+
+def _default_output_dir(output_dir: Path, info: Dict[str, object]) -> Path:
+    run_id = str(info.get("run_id") or Path(output_dir).name)
+    return Path("reports") / run_id
 
 
 def build_report(
     output_dir: Path,
     *,
-    out_dir: Path | None = None,
-    model_name: str | None = None,
-) -> dict[str, Path]:
-    """Read stored scores without recomputing metrics; return generated files.
+    out_dir: Optional[Path] = None,
+    model_name: Optional[str] = None,
+    spectrum_variable: Optional[str] = None,
+    spectrum_init: Optional[str] = None,
+    change_description: Optional[str] = None,
+    compare: Optional[Sequence[str]] = None,
+    members: Optional[int] = None,
+    primary_model: Optional[str] = None,
+    previous_model: Optional[str] = None,
+    primary_leads: Optional[Sequence[float]] = None,
+    exploratory_leads: Optional[Sequence[float]] = None,
+) -> Dict[str, Path]:
+    """按产物目录里的能力出图并写报告，返回 ``{名称: 路径}``。
 
-    Curves keep product, region, threshold, group, unit and aggregation separate.
-    Values are shown per initialization; no new cross-sample average is inferred.
-    This is a basic results report, not the legacy multi-model diagnostic report.
+    Args:
+        output_dir: ``--config`` 里的 output_dir，里面应有 ``manifest.json``
+            以及该能力对应的结果表——连续场是 ``scores.csv``，
+            TS 系列是 ``diagnostics/categorical_wide.csv``。
+        out_dir: 报告输出目录；默认 ``reports/<run_id>``（相对当前目录）。
+        model_name: 报告标题里的模型名；默认取 ``run_id``。**不要用 manifest 的
+            ``forecast_source``**——那是 reader 类型（如 ``"fuxi"``），不是模型名，
+            拿它当标题会张冠李戴。
+        compare: TS 对比模型为 ``["名字=CSV路径", …]``；
+            台风对比模型为 ``["名字=产物目录", …]``，读取目录中的场次曲线与元数据。
+            给出来的模型会和主模型一起进箱线图、差值图和对比表。每个对比路径还会
+            去**它的同目录**找概率评分表——``probability_wide.csv`` 与老命名的
+            ``aroc_bss*.csv`` 都认（见 :func:`_probability_sibling`）；找得到就
+            一起进概率评分一节，找不到就只进 TS 那几节（老归档给的是裸 CSV，
+            旁边没有这张表）。
+        members: 集合成员数（``--members``）。集合产物的 ``manifest.json`` **不写**
+            这个字段，所以只能从命令行给；不给则报告里凡是要写成员数的句子里
+            省略数字。只在集合产物（``weather_ts_ens``）上有意义。
+        spectrum_variable / spectrum_init: 只在连续场链路、且要点名看**某一个起报**
+            的谱曲线时才给（读 ``diagnostics/spectrum_by_init.csv``）。
+            ``spectrum_init`` 省略时取最后一个起报。
+
+    Raises:
+        ValueError: 该能力要的结果表不存在，或认不出能力，或 ``compare`` 不合法。
+        ImportError: 没装 matplotlib（``pip install -e '.[evaluation,visualization]'``）。
     """
+    output_dir = Path(output_dir)
+    manifest = load_manifest(output_dir)
+    capability = _capability_from_manifest(manifest)
+    family = IMPLEMENTED[capability]
+    info = manifest_info_from(manifest)
+    target = Path(out_dir) if out_dir is not None else _default_output_dir(output_dir, info)
+    full_model_name = model_name or str(info.get("run_id") or output_dir.name)
+
+    if family == "typhoon":
+        from pipelines.evaluation.reporting.typhoon_report import (
+            build_typhoon_report,
+        )
+
+        if any(value is not None for value in (
+            spectrum_variable, spectrum_init, change_description, members
+        )):
+            raise ValueError("台风入口不接受谱、改动说明或成员数覆盖；成员数读取实际产物")
+        models = [(full_model_name, output_dir)]
+        for value in compare or []:
+            name, separator, path = value.partition("=")
+            if not separator or not name.strip() or not path.strip():
+                raise ValueError("台风 --compare 必须为 NAME=产物目录")
+            models.append((name.strip(), Path(path.strip())))
+        expected = "ens" if capability == "weather_typhoon_ens" else "det"
+        return build_typhoon_report(
+            models, target, forecast_type=expected, primary_model=primary_model,
+            previous_model=previous_model, primary_leads=primary_leads,
+            exploratory_leads=exploratory_leads,
+        )
+
+    if any(value is not None for value in (
+        primary_model, previous_model, primary_leads, exploratory_leads
+    )):
+        raise ValueError("主模型/旧版本/讨论时效选项只适用于台风报告")
+
+    # 先把 compare 校验干净再往下走：任何错误都必须在 create_report 建目录之前抛出来，
+    # 否则会留下一个只有半张图的空报告目录。
+    comparisons = parse_compare_specs(compare)
+    if comparisons and family != "ts":
+        raise ValueError(
+            f"只有 TS 系列支持 --compare（对比对象要的是同量级、同阈值的宽表）；"
+            f"当前产物是 {capability}（{FAMILY_LABELS[family]}）。"
+        )
+    if full_model_name in comparisons:
+        raise ValueError(
+            f"--compare 里的名字 {full_model_name!r} 和主模型重名了，"
+            f"会把主模型的来源路径覆盖掉。换个名字，或用 --model 改主模型名。"
+        )
+
+    print(f"能力：{capability} —— {FAMILY_LABELS[family]}")
+    if family == "ts":
+        return _render_ts(
+            output_dir, target, full_model_name, change_description, comparisons,
+            ensemble=capability == "weather_ts_ens",
+            members=members,
+        )
+    return _render_field(
+        output_dir,
+        target,
+        full_model_name,
+        info,
+        spectrum_variable,
+        spectrum_init,
+        change_description,
+    )
+
+
+def _probability_sibling(csv_path: Path) -> Optional[Path]:
+    """在结果表所在目录里找概率评分表。
+
+    两种命名都收：新的 ``diagnostics/probability_wide.csv``（和结果表同目录），
+    以及老归档把两张裸 CSV 并排放在一起时的 ``aroc_bss*.csv``。**认的是列不是
+    名字**（``load_probability`` 会校验列），所以老命名直接读得进来。
+    找不到返回 ``None``——那几份只进 TS 那几节，不是错误。
+    """
+    parent = Path(csv_path).parent
+    named = parent / PROBABILITY_WIDE_RELATIVE_PATH.name
+    if named.is_file():
+        return named
+    legacy = sorted(parent.glob("aroc_bss*.csv"))
+    return legacy[0] if legacy else None
+
+
+def _coverage_of(wide) -> int:
+    """最小阈值档的**全时效配对样本合计**——与报告第二节「样本合计」列同一口径。
+
+    报告要拿它做「各份来源的样本量差多少」那句话。取值失败（缺列、全是空）返回 0，
+    调用方会把它当作「这份没报样本量」跳过，而不是在报告里写个 0。
+    """
+    if "n_pairs" not in wide.columns or "threshold_mm" not in wide.columns:
+        return 0
     import pandas as pd
 
-    output_dir = Path(output_dir)
-    scores_path = output_dir / "scores.csv"
-    data = pd.read_csv(scores_path, low_memory=False)
-    required = {"variable", "metric", "lead_h", "value", "status"}
-    missing = required.difference(data.columns)
-    if missing:
-        raise ValueError(f"scores.csv 缺少报告必需列：{', '.join(sorted(missing))}")
-    manifest_path = output_dir / "manifest.json"
-    manifest = (
-        json.loads(manifest_path.read_text(encoding="utf-8"))
-        if manifest_path.is_file() else {}
-    )
-    # Import plotting only when a report is requested, before creating artifacts.
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from matplotlib.figure import Figure
+    thresholds = pd.to_numeric(wide["threshold_mm"], errors="coerce")
+    if not thresholds.notna().any():
+        return 0
+    pairs = pd.to_numeric(wide.loc[thresholds == thresholds.min(), "n_pairs"], errors="coerce")
+    return int(pairs.dropna().sum())
 
-    target = Path(out_dir) if out_dir is not None else output_dir / "report"
-    target.mkdir(parents=True, exist_ok=True)
-    title = model_name or manifest.get("run_id") or output_dir.name
-    lines = [
-        f"# {title} 评测结果报告", "",
-        f"评测结果目录：`{output_dir.resolve()}`", "",
-        f"评分记录：{len(data)} 行。", "",
-        "状态统计：" + ", ".join(
-            f"{name}={count}" for name, count in data["status"].fillna("unknown").value_counts().items()
-        ), "",
-        "曲线按起报分别展示已保存的评分，不重新计算指标，也不跨区域、阈值或产品类型求平均。",
-        "谱指标仅展示已保存的标量；本报告不推断谱类型、波长或频带。", "",
-    ]
-    artifacts: dict[str, Path] = {}
-    # Include every available scoring dimension except time and sample counts.
-    dimensions = [name for name in (
-        "run_id", "model_id", "dataset_id", "variable", "level", "metric",
-        "product_kind", "region", "group", "threshold", "window_h", "unit",
-        "aggregation", "weights_id", "sample_unit", "storm", "protocol_id",
-        "metric_version",
-    ) if name in data.columns]
-    usable = data.loc[data["status"].eq("success")].copy()
-    usable["value"] = pd.to_numeric(usable["value"], errors="coerce")
-    usable["lead_h"] = pd.to_numeric(usable["lead_h"], errors="coerce")
-    usable = usable.loc[usable["value"].notna() & usable["lead_h"].notna()]
-    for index, (keys, rows) in enumerate(usable.groupby(dimensions, dropna=False, sort=False), 1):
-        labels = [f"{name}={value}" for name, value in zip(dimensions, keys)
-                  if pd.notna(value) and str(value) != ""]
-        lines.extend([f"## 评分组 {index}", "", " · ".join(labels), ""])
-        figure = Figure(figsize=(8, 4), layout="constrained")
-        FigureCanvasAgg(figure)
-        axes = figure.subplots()
-        series_columns = [name for name in ("init_time", "valid_time") if name in rows.columns]
-        # Initialization defines a curve; valid time is retained in the table.
-        series = rows.groupby("init_time", dropna=False, sort=False) if "init_time" in rows else [("scores", rows)]
-        for name, frame in series:
-            frame = frame.sort_values("lead_h")
-            if frame["lead_h"].duplicated().any():
-                axes.scatter(frame["lead_h"], frame["value"], label=str(name))
-            else:
-                axes.plot(frame["lead_h"], frame["value"], marker="o", label=str(name))
-        axes.set_xlabel("Lead time (h)")
-        axes.set_ylabel(str(rows.iloc[0]["metric"]))
-        axes.grid(alpha=0.3)
-        if "init_time" in rows and rows["init_time"].nunique(dropna=False) <= 12:
-            axes.legend(fontsize="small")
-        path = target / f"scores_{index:03d}.png"
-        figure.savefig(path, dpi=120)
-        artifacts[f"plot_{index}"] = path
-        lines.extend([f"![评分曲线]({path.name})", ""])
-        columns = series_columns + ["lead_h", "value"]
-        lines.extend(["| " + " | ".join(columns) + " |",
-                      "| " + " | ".join("---" for _ in columns) + " |"])
-        for values in rows.sort_values(series_columns + ["lead_h"])[columns].itertuples(index=False, name=None):
-            cells = [str(value).replace("|", "\\|").replace("\n", " ") for value in values]
-            lines.append("| " + " | ".join(cells) + " |")
-        lines.append("")
-    if usable.empty:
-        lines.extend(["没有可绘图的成功评分记录，请检查评测日志和输入资料。", ""])
-    report_path = target / "REPORT.md"
-    report_path.write_text("\n".join(lines), encoding="utf-8")
-    artifacts["report"] = report_path
-    return artifacts
+
+def _render_ts(
+    output_dir: Path,
+    target: Path,
+    model_name: str,
+    change_description: Optional[str],
+    comparisons: Optional[Dict[str, Path]] = None,
+    *,
+    ensemble: bool = False,
+    members: Optional[int] = None,
+) -> Dict[str, Path]:
+    """TS 系列：宽表 → 曲线图 + 报告。``comparisons`` 是 ``{模型名: 对比结果表路径}``。
+
+    ``ensemble`` 由 :func:`build_report` 按能力名给定：``weather_ts_ens`` 才打开
+    集合专属措辞。**不靠目录名或 manifest 里的 reader 名去猜**——那些在这个仓库里
+    已经被证明不可靠（本批的 ``weather_ts_ens_s2b`` 里 ``run_id`` 就写着另一个名字）。
+    """
+    wide_path = output_dir / CATEGORICAL_WIDE_RELATIVE_PATH
+    if not wide_path.is_file():
+        raise ValueError(
+            f"{wide_path} 不存在，没有可出报告的结果表。TS 系列的图表吃的是宽表，"
+            f"这里**不做长表→宽表转换**（转出来的口径和评测流程自己写的那份未必一致）。"
+            f'在配置里加上 writers=["csv_long", "categorical_wide"] 重跑评测即可产出。'
+        )
+    try:
+        import pandas as pd
+
+        from pipelines.evaluation.reporting.precipitation_plots import PrecipitationPlotter
+    except ImportError as error:  # pragma: no cover - 取决于环境
+        raise ImportError(
+            "出图需要 matplotlib（可选依赖），先装：pip install -e '.[evaluation,visualization]'。"
+            f"原始错误：{error}"
+        ) from error
+
+    comparisons = comparisons or {}
+    # 来源要连对比模型一起写进报告头，否则每个对比模型都标成"未提供"
+    sources = {model_name: str(wide_path)}
+    sources.update({name: str(path) for name, path in comparisons.items()})
+    # 纬度带的边界只在 manifest 里（宽表只有带名），报告要写成「带名 [南界, 北界]」
+    # 就得从这里读。读不到（老产物没写这个键）时返回空，报告只显示带名。
+
+    # 每份来源的表只读一次：宽表要连用三次（主数据、概率同目录、样本量）。
+    frames = {model_name: pd.read_csv(wide_path)}
+    frames.update({name: pd.read_csv(path) for name, path in comparisons.items()})
+
+    # 概率评分：主模型读自己的 diagnostics/，对比模型读**它自己那一行的同目录**
+    # （老归档给的是裸 CSV，旁边没有这张表，自然缺席）。缺表不是错误——那几份只出 TS。
+    probability: Dict[str, object] = {}
+    for name, csv_path in [(model_name, wide_path), *comparisons.items()]:
+        sibling = _probability_sibling(csv_path)
+        if sibling is not None:
+            probability[name] = pd.read_csv(sibling)
+    # 样本量披露：最小阈值档的全时效 n_pairs 合计。取不到的不进覆盖表，
+    # 免得报告里出现「某某 0」这种会被读成"零样本"的数字。
+    coverage = {name: count for name, count in ((n, _coverage_of(f)) for n, f in frames.items()) if count}
+
+    return PrecipitationPlotter().create_report(
+        frames[model_name],
+        output_dir=target,
+        model_name=model_name,
+        baselines={name: frames[name] for name in comparisons} or None,
+        sources=sources,
+        change_description=change_description,
+        region_labels=region_labels_from(output_dir),
+        probability=probability or None,
+        members=members,
+        coverage=coverage or None,
+        ensemble=ensemble,
+    )
+
+
+def _render_field(
+    output_dir: Path,
+    target: Path,
+    model_name: str,
+    info: Dict[str, object],
+    spectrum_variable: Optional[str],
+    spectrum_init: Optional[str],
+    change_description: Optional[str],
+) -> Dict[str, Path]:
+    """连续场：长表 → 曲线图 + 报告。"""
+    scores_path = output_dir / "scores.csv"
+    if not scores_path.is_file():
+        raise ValueError(f"{scores_path} 不存在，没有可出报告的结果表")
+    try:
+        import pandas as pd
+
+        from pipelines.evaluation.reporting.field_plots import FieldScorePlotter
+    except ImportError as error:  # pragma: no cover - 取决于环境
+        raise ImportError(
+            "出图需要 matplotlib（可选依赖），先装：pip install -e '.[evaluation,visualization]'。"
+            f"原始错误：{error}"
+        ) from error
+
+    return FieldScorePlotter().create_report(
+        # low_memory=False：长表的 ``unit`` 列是混合类型（``m^2/s^2`` / ``1`` / 空），
+        # 分块推断会一边读一边告警"列有混合类型"，也让 dtype 随块变化。
+        pd.read_csv(scores_path, low_memory=False),
+        output_dir=target,
+        spectrum_dir=output_dir,
+        spectrum_variable=spectrum_variable,
+        spectrum_init=spectrum_init,
+        model_name=model_name,
+        sources={"scores": str(scores_path)},
+        manifest_info=info,
+        change_description=change_description,
+    )
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="按评测产物目录自动选模板，出图并写 Markdown 报告",
+        epilog="示例: python -m pipelines.evaluation.reporting.report "
+        "evaluation_results/weather_ts_single_fgvp --result reports/weather_ts_single_fgvp",
+    )
+    parser.add_argument("output_dir", type=Path, help="评测产物目录（含 scores.csv 与 manifest.json）")
+    parser.add_argument("--result", type=Path, default=None, help="报告输出目录（默认 reports/<run_id>）")
+    parser.add_argument("--model", default=None, help="模型名（默认取 manifest 的 run_id）")
+    parser.add_argument("--primary-model", help="台风分析主模型")
+    parser.add_argument("--previous-model", help="台风主模型的旧版本显示名")
+    parser.add_argument("--primary-leads", type=float, nargs="+", help="台风主要讨论时效")
+    parser.add_argument("--exploratory-leads", type=float, nargs="+", help="台风探索性讨论时效")
+    parser.add_argument(
+        "--spectrum-variable", default=None, help="要看谱曲线的变量（需变量真的算过纬向谱）"
+    )
+    parser.add_argument(
+        "--spectrum-init", default=None,
+        help="谱曲线的起报时刻，按子串匹配 init_time（如 20250102），省略取最后一个起报",
+    )
+    parser.add_argument("--change", default=None, help="本次改动说明，写进报告第一节")
+    parser.add_argument(
+        "--members", type=int, default=None,
+        help="集合成员数（只在 weather_ts_ens 上有意义）。产物里没有这个字段，"
+        "报告里凡要写成员数的地方都靠它；不给就省略数字",
+    )
+    parser.add_argument(
+        "--compare", action="append", default=None, metavar="名字=CSV路径",
+        help="可重复：TS 为 NAME=宽表CSV；台风为 NAME=产物目录",
+    )
+    args = parser.parse_args(argv)
+
+    artifacts = build_report(
+        args.output_dir,
+        out_dir=args.result,
+        model_name=args.model,
+        spectrum_variable=args.spectrum_variable,
+        spectrum_init=args.spectrum_init,
+        change_description=args.change,
+        compare=args.compare,
+        members=args.members,
+        primary_model=args.primary_model, previous_model=args.previous_model,
+        primary_leads=args.primary_leads, exploratory_leads=args.exploratory_leads,
+    )
+    for name, path in artifacts.items():
+        print(f"  {name}: {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

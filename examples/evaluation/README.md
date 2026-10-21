@@ -1,4 +1,4 @@
-# Fengqing 评测配置
+# 评测配置与报告
 
 本目录存放具体数据位置、评测时间和输出位置。通用评测流程位于
 `pipelines/evaluation/`，指标与数据契约位于 `datakit/evaluation/`。
@@ -15,16 +15,91 @@ python -m pipelines.evaluation --config fdp_precip_ens_fengqing
 也可以传入配置文件的完整路径。运行真实资料配置前，请按本目录中相应文件设置
 数据目录和输出目录。
 
-`run_fengqing_evaluation.py` 在评测落盘后默认生成基础结果报告，保存为
-`<output_dir>/report/REPORT.md` 和同目录 PNG 图。需要安装
-`.[evaluation,visualization]`；只输出评测表格可传 `--no-report`。
-基础报告按评分维度和起报展示已保存的结果，不包含旧项目的多模型分析或谱诊断。
+通用示例入口支持单个 `cfg` 和批量 `cfgs`，适用于各模型配置：
+
+```bash
+python -m examples.evaluation.run_evaluation --config weather_ts_single_fgvp
+# 显式开启报告
+python -m examples.evaluation.run_evaluation --config weather_rmse_single_fuxi --report
+```
+
+默认只评估并保存评分，不生成报告。传 `--report` 才会在 `<output_dir>/report/`
+生成报告，标题取结果中的 run ID，也可用 `--model-name` 指定。
+开启报告时会先检查整批配置的主流程是否受支持，避免运行到一半才发现模板缺失；
+不支持则在任何评估开始前报错。`--no-report` 保留为兼容参数，与默认行为相同，
+不能和 `--report` 同时使用。
+`--forecast-root`、`--observation-root`、`--reference-root` 覆盖对应输入路径，
+参考路径可以是文件。ERA5 观测路径使用 `--era5-pl-store` 和 `--era5-sfc-store`。
+`--output-dir` 在单任务中直接指定输出目录，在批量任务中使用其下的 `<cfg.name>`
+子目录；不指定时保留各配置的输出目录。批量任务顺序执行，遇到错误停止。
+
+报告按 `manifest.json` 中的流程身份选择 TS、连续场或台风模板，
+读取对应评分表生成统计、图表和 Markdown，不重新执行评估。
+未知流程或缺少必要产物时明确报错。
+生成报告需要安装 `.[evaluation,visualization]`。
+
+| 产物主流程 | 报告 |
+|---|---|
+| `weather_ts_det`、`weather_ts_ens`、`fdp_precip_ts` | TS 报告 |
+| `weather_field_scores` | 连续场报告 |
+| `weather_typhoon_det`、`weather_typhoon_ens` | 台风报告 |
+
+主流程是流程列表中的第一项，与 Runner 写入 manifest 的身份一致。例如
+`["weather_ts_ens", "weather_ts_ens_prob"]` 可生成包含概率评分的 TS 报告；
+单独的 `weather_ts_ens_prob` 没有报告模板，但仍可正常执行评估。
 
 已有 CSV 时，可以独立生成报告，无需重跑评测：
+
+```bash
+python -m pipelines.evaluation.reporting \
+    /workspace/szwCode/evaluation_results/weather_ts_single_tongyun_for_datakittest_all \
+    --result reports/weather_ts_single_fgvp \
+    --model Tongyun
+```
+
+命令支持 `--compare`、`--members` 和谱、台风报告参数。
+`--result` 为相对当前工作目录的路径；
+省略时默认输出到 `reports/<run_id>/`。
 
 ```python
 from pathlib import Path
 from pipelines.evaluation.reporting import build_report
 
-build_report(Path("results/fengqing"), model_name="FengQing")
+build_report(
+    Path("results/fengqing"),
+    out_dir=Path("reports/fengqing"),
+    model_name="FengQing",
+)
 ```
+
+报告代码分工：
+
+| 模块 | 职责 |
+|---|---|
+| `report.py` | 公开入口、参数校验、产物类型识别与派发 |
+| `precipitation_plots.py` / `field_plots.py` | 组织相应类型的出图，再调用正文生成函数 |
+| `ts_report.py` / `field_report.py` | 汇总结果、生成表格和 Markdown 正文，不创建图片 |
+| `typhoon_report.py` / `typhoon_plots.py` | 台风场次配对、统计与正文 / 按配对统计绘图 |
+| `_metadata.py` / `_plotting.py` / `radar.py` | 运行信息和区域解析 / 字体、样式与图片保存 / 雷达图及归一化 |
+| `tables.py` / `views.py` / `writer.py` | 评估阶段的结果整理与写盘，供报告阶段读取 |
+
+业务调用统一使用上面的 `build_report()` 或报告命令。内部的
+`build_ts_report()` 只写正文，图片通过 `artifacts` 传入；需要完整 TS 报告时，
+由 `PrecipitationPlotter.create_report()` 组织出图与正文生成。
+
+接口约定：
+
+| 项目 | 当前约定 |
+|---|---|
+| 示例脚本 | `run_fengqing_evaluation.py` 已改名为 `run_evaluation.py` |
+| 示例函数 | `run_example(..., report=False)`，返回单个或批量任务的结果目录列表 |
+| 示例命令 | 默认只评估；使用 `--report` 开启报告 |
+| 独立报告默认位置 | `reports/<run_id>/`，相对运行目录；可显式传 `out_dir` / `--result` |
+| 输入要求 | 必须有 `manifest.json` 及对应类型的结果表 |
+| 返回字典 | TS、连续场使用 `artifacts["report"]`；台风使用 `artifacts["REPORT"]` |
+
+资料路径和评估时段由配置文件指定；重建报告时直接使用已有产物目录。
+
+相同输入下应使用相同模型名、报告参数、绘图库版本、字体和可选依赖（如 seaborn），
+以核对图片一致性。报告时间、输出路径以及台风报告的实现校验摘要会随运行变化，
+不作为评分或图表差异。

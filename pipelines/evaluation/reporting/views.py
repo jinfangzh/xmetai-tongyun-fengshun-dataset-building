@@ -69,12 +69,12 @@ def write_probability_wide(tables, context, output_dir: Path) -> Path:
     return path
 
 
-#: 赤道周长（km）。波长 = 赤道周长 / 纬向波数，与参考实现同一个常数。
+#: 赤道周长（km）。波长 = 赤道周长 / 纬向波数。
 _EARTH_CIRCUMFERENCE_KM = 40075.0
 
 
 def _spectrum_number(value) -> str:
-    """按参考实现的 ``%.6g`` 输出，便于跟已有归档逐格对比。"""
+    """按 ``%.6g`` 输出数值，即保留 6 位有效数字。"""
     return f"{float(value):.6g}"
 
 
@@ -111,7 +111,6 @@ def _spectrum_curve_mean(entries: List[Any]):
 def write_spectrum(tables, context, output_dir: Path) -> Path:
     """逐波数功率谱：全体样本均值曲线 + 逐起报曲线。
 
-    对标参考实现的 ``det_summary_spectrum_{var}.csv`` / ``spectrum_{init}_{var}.csv``：
     只出 k=1..720（k=0 去纬向均值后恒为 0，去掉），``wavelength_km = 40075 / k``。
     每个起报一条曲线，是其 60 个时效的平均。
 
@@ -183,8 +182,7 @@ def write_spectrum(tables, context, output_dir: Path) -> Path:
 def _typhoon_number(value: Any) -> str:
     """逐场次 csv 的数值格式：6 位有效数字，非有限值写空。
 
-    对齐旧归档 ``tc<编号>_<起报>.csv`` 的写法（``%.6g``）——那是给人看的表，
-    6 位有效数字足够读；``str(float)`` 的 17 位尾数在这里只是噪音。
+    场次表使用 ``%.6g`` 控制展示精度，拼接总表保留完整数值精度。
     """
     try:
         number = float(value)
@@ -217,7 +215,7 @@ def _typhoon_repr(value: Any) -> str:
 def write_typhoon_cases(tables, context, output_dir: Path) -> Path:
     """台风逐场次路径表 + 拼接总表。
 
-    对标旧归档 ``weather_typhoon_*/`` 的三个产物：
+    输出三个产物：
 
     - ``typhoon/tc<编号>_<起报>.csv``：一个场次一行一个时效，15 列，
       数值 6 位有效数字；对不上实况的时效留空；
