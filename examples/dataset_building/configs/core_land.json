@@ -1,5 +1,5 @@
 {
-  "profile": "examples/validation/profiles/era5_land_c8_1p5_h24.json",
+  "profile": "examples/dataset_building/configs/profiles/era5_land_c8_1p5_h24.json",
   "memory_budget_mib": 2048,
   "dataset": {
     "hist_frames": 1,

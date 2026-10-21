@@ -8,6 +8,8 @@
 
 校验范围标识：`confirmed-format`
 
+代码布局修订：2026-10-21（本次仅迁移目录和导入，校验规则版本不变）
+
 ## 1. 目的与适用范围
 
 本计划用于验收独立生产或刷新后交付的标准数据集。验收对象为完整数据集的结构、
@@ -15,7 +17,7 @@
 本版只纳入已确认规则，不以暂定规则或默认经验阈值作验收依据。
 
 当前十套实例以所有者指定的 refresh 数据集为格式基准。通道清单、顺序和网格已冻结在
-各产品 schema 中；运行时不得从被检数据反推标准。新生产批次使用同一产品标准，另建
+流程内各产品定义中；运行时不得从被检数据反推标准。新生产批次使用同一产品标准，另建
 实例 profile 冻结路径、时间范围和数据修订号，不将本批的起止时间套用于其他批次。
 
 程序始终只读。不得自动改名、以 `level` 代替 `channel`、重排、翻转网格、填零、
@@ -25,20 +27,24 @@
 
 | 层次 | 位置 | 内容 |
 |---|---|---|
-| 共用结构 | `datakit/schema/standard_dataset.py` | 网格、通道、掩膜、辅助角色和实例类型 |
-| 产品标准 | `datakit/schema/*_c*.py`、`dataset_products.py` | 完整有序通道、可验收语义字段、网格变体、掩膜、辅助结构 |
-| 批次实例 | `examples/validation/profiles/*.json` | 产品版本、时间首末值、独立计数、路径、修订号、校验范围 |
+| 共用结构 | `pipelines/dataset_building/definitions/standard_dataset.py` | 网格、通道、掩膜、辅助角色和实例类型 |
+| 产品标准 | `pipelines/dataset_building/definitions/*_c*.py`、`dataset_products.py` | 完整有序通道、可验收语义字段、网格变体、掩膜、辅助结构 |
+| 生产定义与元数据 | `pipelines/dataset_building/definitions/era5_c116.py`、`channel_attributes.py` | c116 来源映射及生产元数据生成；不从生成器推导验收真值 |
+| 批次实例 | `examples/dataset_building/configs/profiles/*.json` | 产品版本、时间首末值、独立计数、路径、修订号、校验范围 |
 | 严格 IO | `datakit/io/_zarr_inspection.py` | 原始元数据、指定块、物理块键、编码支持范围 |
-| 条目检查 | `datakit/validation/` | 结构、时间、语义、辅助文件、原值检查和报告对象 |
-| 路径编排 | `pipelines/dataset/_standard_validation.py` | 只读扫描、覆盖计数、错误和中断结论 |
-| 块扫描 | `pipelines/dataset/_standard_scan.py` | 主块读取、物理覆盖、有界进度记录；资源测量由同层私有助手负责 |
-| 执行与保存 | `examples/validation/validate_standard_dataset.py` | 单套/批量 CLI、报告、逐块证据 |
+| 条目检查 | `pipelines/dataset_building/validation/` | 结构、时间、语义、辅助文件、原值检查和报告对象 |
+| 路径编排 | `pipelines/dataset_building/_standard_validation.py` | 只读扫描、覆盖计数、错误和中断结论 |
+| 块扫描 | `pipelines/dataset_building/_standard_scan.py` | 主块读取、物理覆盖、有界进度记录；资源测量由同层私有助手负责 |
+| 配置与保存 | `pipelines/dataset_building/config.py`、`reporting.py` | 严格配置加载、报告保存 |
+| 执行入口 | `examples/dataset_building/validate_standard_dataset.py` | 单套/批量 CLI、逐块证据 |
 
-产品标准、实例 profile 和输入分别保留版本及摘要。本版 profile 的 `approved` 只表示
+产品标准暂作为该流程的内部定义维护，公共 schema 暂不新增产品规则；后续由维护者
+提炼共性，以 YAML 建立公共声明。本次保留 JSON 实例格式。基础库不反向依赖 pipeline，
+严格只读 IO 继续复用基础库。产品标准、实例 profile 和输入分别保留版本及摘要。本版 profile 的 `approved` 只表示
 本版已纳入规则获准使用，不表示数据已通过 full 或已完成其他用途的验收。
 
 每个产品文件统一声明 `CHANNELS`、`MASK`、`VARIANTS`、`PRODUCT`，完整产品在本文件
-使用具名参数组装。产品汇总仅导入和选择；已有生产名称保留兼容导出，多版本产品显式
+使用具名参数组装。产品汇总仅导入和选择；已有生产名称在流程内保留，多版本产品显式
 分开声明，不自动转换。共用层次、语义和辅助定义不依赖具体产品文件。
 
 ## 3. 校验条款
@@ -431,8 +437,8 @@ python -m pytest tests/validation -q
 ### 6.2 十套 quick
 
 ```bash
-python -m examples.validation.validate_standard_dataset \
-  --inventory examples/validation/profiles/inventory.json \
+python -m examples.dataset_building.validate_standard_dataset \
+  --inventory examples/dataset_building/configs/profiles/inventory.json \
   --mode quick --sample-blocks 3 \
   --output /workspace/xujn/validation-reports/quick-YYYYMMDD-HHMMSS
 ```
@@ -443,8 +449,8 @@ python -m examples.validation.validate_standard_dataset \
 正式命令不传 max-blocks；存在规则失败或证据缺失时保留原结果，不补造通过证据。
 
 ```bash
-python -m examples.validation.validate_standard_dataset \
-  --profile examples/validation/profiles/era5_land_c8_1p5_h24.json \
+python -m examples.dataset_building.validate_standard_dataset \
+  --profile examples/dataset_building/configs/profiles/era5_land_c8_1p5_h24.json \
   --mode full \
   --output /workspace/xujn/validation-reports/land-full-YYYYMMDD-HHMMSS
 ```

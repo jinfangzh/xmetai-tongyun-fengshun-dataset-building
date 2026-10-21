@@ -7,9 +7,9 @@ import json
 from pathlib import Path
 
 from datakit.io import file_sha256
-from pipelines.dataset import validate_standard_combination
-from datakit.validation import to_jsonable
-from ._standard_config import load_profile, read_json
+from pipelines.dataset_building import validate_standard_combination
+from pipelines.dataset_building.validation.reports import to_jsonable
+from pipelines.dataset_building.config import load_profile, read_json
 
 
 def main() -> int:

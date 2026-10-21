@@ -6,6 +6,10 @@
 检查。它不负责打开数据文件；Zarr 路径级检查由
 `pipelines.dataset.check_zarr_range` 组织。
 
+标准产品、物理块覆盖和 quick/full 的专用校验位于
+[`pipelines/dataset_building`](../../pipelines/dataset_building/README.md)，
+与对应产品类型一并维护。本模块不反向依赖该流程。
+
 ## 2. 模块与功能
 
 - `schema.py`：核心维度、坐标唯一性和时间顺序检查。

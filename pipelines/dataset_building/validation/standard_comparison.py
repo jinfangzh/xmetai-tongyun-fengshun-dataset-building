@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from datakit.schema.standard_dataset import ConversionChannelRule
+from ..definitions.standard_dataset import ConversionChannelRule
 
 
 def compare_standard_channel_values(

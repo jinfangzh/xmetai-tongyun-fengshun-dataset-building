@@ -22,7 +22,7 @@ from datakit.io import (
     write_zarr,
 )
 from datakit.io._common import infer_format, normalize_format
-from datakit.schema import channel_attributes
+from pipelines.dataset_building.definitions.channel_attributes import channel_attributes
 from datakit.transforms import (
     denormalize_xarray,
     enrich_dataset_attrs,

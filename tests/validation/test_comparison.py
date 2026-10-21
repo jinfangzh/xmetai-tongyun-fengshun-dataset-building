@@ -10,16 +10,16 @@ from dataclasses import replace
 import pytest
 import zarr
 
-from datakit.schema.standard_dataset import (
+from pipelines.dataset_building.definitions.standard_dataset import (
     ConversionChannelRule,
     ConversionValidationSpec,
     EvidenceReference,
 )
-from pipelines.dataset import validate_standard_dataset
+from pipelines.dataset_building import validate_standard_dataset
 
 
 def test_conversion_full_mapping_and_attached_receipt(published):
-    from pipelines.dataset import validate_standard_conversion
+    from pipelines.dataset_building import validate_standard_conversion
 
     path, spec = published
     source = path.parent / "source.zarr"
@@ -59,8 +59,8 @@ def test_conversion_full_mapping_and_attached_receipt(published):
 
 
 def test_combination_requires_full_reports_and_exact_time(published):
-    from datakit.validation import check_standard_time_alignment
-    from pipelines.dataset import validate_standard_combination
+    from pipelines.dataset_building.validation.standard_dataset import check_standard_time_alignment
+    from pipelines.dataset_building import validate_standard_combination
 
     path, spec = published
     other = path.parent / "other.zarr"

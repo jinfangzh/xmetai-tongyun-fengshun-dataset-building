@@ -1,4 +1,4 @@
-"""Report writers used by the runnable examples, outside library validation."""
+"""Save dataset-building reports outside the input data directories."""
 
 from __future__ import annotations
 

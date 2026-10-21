@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from datakit.schema.standard_dataset import DatasetValidationSpec, QualityRule
+from ..definitions.standard_dataset import DatasetValidationSpec, QualityRule
 from .reports import ValidationReport
 
 

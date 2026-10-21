@@ -2,30 +2,36 @@
 
 当前规范见 [标准数据集校验计划](validation/VALIDATION_PLAN.md)。计划 1.4、十份实例
 profile 1.6 使用 `confirmed-format` 范围，仅验收已确认规则。主数据输入始终只读。
-schema 冻结每个产品的完整通道顺序、网格、已确认处理声明、内嵌掩膜和辅助结构；
+流程内产品定义冻结每个产品的完整通道顺序、网格、已确认处理声明、内嵌掩膜和辅助结构；
 profile 冻结每批的时间、路径和修订号。其他批次应新建 profile，不反推期望值。
 
-## 模块职责与公共入口
+2026-10-21 调整代码归属：产品定义和专用校验集中在 `pipelines/dataset_building/`，
+配置集中在 `examples/dataset_building/configs/`。公共 schema 暂不新增产品标准，后续由
+维护者提炼共性并设计 YAML 声明。此次目录迁移不改变计划 1.4 和配置 1.6 的规则。
+
+## 模块职责与流程入口
 
 | 位置 | 职责 |
 |---|---|
-| `datakit/schema/standard_dataset.py` | 共用产品、网格、通道、掩膜、实例和证据类型 |
-| `datakit/schema/*_c*.py`、`dataset_products.py` | 按产品独立声明标准，显式选择产品版本 |
+| `pipelines/dataset_building/definitions/standard_dataset.py` | 共用产品、网格、通道、掩膜、实例和证据类型 |
+| `pipelines/dataset_building/definitions/*_c*.py`、`dataset_products.py` | 按产品独立声明标准，显式选择产品版本 |
+| `pipelines/dataset_building/definitions/era5_c116.py`、`channel_attributes.py` | c116 生产常量、来源映射及生产通道元数据生成；转换和提取流程使用新导入 |
 | `datakit/io/_zarr_inspection.py` | 严格只读元数据、原始块及物理键定位 |
-| `datakit/validation/standard_dataset.py`、`_standard_auxiliary.py`、`_standard_quality.py` | 已打开对象的规则检查和有界逐通道统计，不负责路径打开或报告写入 |
-| `datakit/validation/reports.py` | 统一状态、quick/full 结论和 JSON 安全转换 |
-| `pipelines/dataset/_standard_validation.py` | 输入预检、辅助对象管理、证据绑定和最终覆盖结论 |
-| `pipelines/dataset/_standard_scan.py`、`_validation_runtime.py` | 主块扫描、物理覆盖、进度、文件变化及进程内存测量 |
-| `examples/validation/` | CLI、JSON 配置和报告保存；独立 core 探测不引入核心库依赖 |
+| `pipelines/dataset_building/validation/standard_dataset.py`、`_standard_auxiliary.py`、`_standard_quality.py` | 已打开对象的规则检查和有界逐通道统计，不负责路径打开或报告写入 |
+| `pipelines/dataset_building/validation/reports.py` | 统一状态、quick/full 结论和 JSON 安全转换 |
+| `pipelines/dataset_building/_standard_validation.py` | 输入预检、辅助对象管理、证据绑定和最终覆盖结论 |
+| `pipelines/dataset_building/_standard_scan.py`、`_validation_runtime.py` | 主块扫描、物理覆盖、进度、文件变化及进程内存测量 |
+| `pipelines/dataset_building/config.py`、`reporting.py` | 配置加载、报告落盘 |
+| `examples/dataset_building/` | CLI 入口和 configs 配置；独立 core 探测不引入核心库依赖 |
 | `tests/validation/` | 按扫描、布局、产品、质量、掩膜、辅助、确认范围、对照、CLI 和报告分组的回归 |
 
 ```python
-from pipelines.dataset import validate_standard_dataset
-from datakit.schema import DatasetValidationSpec, get_dataset_product
-from datakit.validation import ValidationReport, to_jsonable
+from pipelines.dataset_building import validate_standard_dataset
+from pipelines.dataset_building.definitions import DatasetValidationSpec, get_dataset_product
+from pipelines.dataset_building.validation.reports import ValidationReport, to_jsonable
 ```
 
-库接收结构化输入并返回报告对象；示例负责配置加载、输出路径和文件保存。
+流程入口接收结构化输入并返回报告对象；config/reporting 负责配置加载和报告保存，示例负责 CLI 参数。
 产品模块共享共用类型和辅助定义，每个产品仍独立维护通道、网格和 MASK。
 转换/组合专项与单套校验共享证据和报告类型，保留各自入口。
 
@@ -41,8 +47,10 @@ from datakit.validation import ValidationReport, to_jsonable
 `PRODUCT` 使用 `product_id/version/channels/variants/mask` 具名参数。
 `dataset_products.py` 只汇总导入和选择，不构造个别产品。
 ORAS5 另有显式 `CURRENT_CHANNELS/CURRENT_PRODUCT`，默认 `CHANNELS/PRODUCT` 对应旧版，
-两个版本不自动转换。ERA5 c116 的 `DYNAMIC_CHANNELS` 是 `CHANNELS` 的兼容名称，
-原网格和生产源映射继续可用。共用产品助手依赖通用维度及类型，不依赖个别产品模块。
+两个版本不自动转换。ERA5 c116 的 `CHANNELS` 与 `DYNAMIC_CHANNELS` 在流程内同一模块
+维护，原网格、来源映射及生产元数据生成能力一并迁入，值及默认行为保留；公共 schema
+不再导出这些产品接口。仓库外调用方需要更新导入路径。共用产品助手依赖通用维度及
+类型，不依赖个别产品模块。生产元数据生成器不作为严格验收标准的推导来源。
 
 ## 当前验收范围
 
@@ -66,13 +74,14 @@ units/source_units 接受值尚未定稿，本版不判定这两个字段；其�
 外部 mask 文件不打开、不参与验收。未登记 NC/NPY 为警告，不能用它们补齐主数据。
 这些范围外项目不会以 needs-review 阻断本版 quick，也不会被标记为已通过。
 
-通用库的默认 `strict-standard` 范围仍保留显式 QualityRule、来源/消费者证据能力；
+本流程的默认 `strict-standard` 范围仍保留显式 QualityRule、来源/消费者证据能力；
 它不因十份 profile 使用 confirmed-format 而被整体放宽。confirmed-format 不接受
 QualityRule；新规则经确认后需显式建立新的配置/标准版本再纳入。
 
 ## 如何执行
 
-在仓库根目录运行。服务器已部署目录为
+在仓库根目录运行。以下路径是历史部署环境，须先部署本次分支代码后才能使用新的 CLI 路径；
+本次本地迁移未更新服务器。历史部署目录为
 `/workspace/xujn/datakit-validation-20261012-4993ba64`，解释器为
 `/workspace/xujn/Data_Format_Refresh/.runtime/bin/python`。离线测试依赖在部署目录的
 test-dependencies 中，无须修改共享运行环境。
@@ -85,8 +94,8 @@ export TEMP="$PWD/scratch"
 export TMP="$PWD/scratch"
 PY=/workspace/xujn/Data_Format_Refresh/.runtime/bin/python
 
-"$PY" -m examples.validation.validate_standard_dataset \
-  --inventory examples/validation/profiles/inventory.json \
+"$PY" -m examples.dataset_building.validate_standard_dataset \
+  --inventory examples/dataset_building/configs/profiles/inventory.json \
   --mode quick --sample-blocks 3 \
   --output /workspace/xujn/validation-reports/quick-YYYYMMDD-HHMMSS
 ```

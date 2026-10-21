@@ -10,7 +10,8 @@
 
 完整标准数据集的严格校验提供独立产品标准、quick/full 扫描、物理覆盖证明和发布报告。
 程序测试、十套配置及服务器运行步骤见 [标准数据集校验](docs/DATASET_VALIDATION.md)。
-执行示例位于 `examples/validation/`，核心库仍只接收结构化输入。
+产品定义与专用校验实现在 `pipelines/dataset_building/`，执行示例和配置位于
+`examples/dataset_building/`；基础库不依赖此流程，公共 schema 暂不新增产品标准。
 
 ## 模块边界
 

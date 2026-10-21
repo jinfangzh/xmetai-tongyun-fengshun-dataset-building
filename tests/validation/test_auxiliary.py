@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 import zarr
 
-from datakit.schema.standard_dataset import AuxiliaryDefinition
-from pipelines.dataset import validate_standard_dataset
+from pipelines.dataset_building.definitions.standard_dataset import AuxiliaryDefinition
+from pipelines.dataset_building import validate_standard_dataset
 
 from ._helpers import _checks
 
@@ -163,7 +163,7 @@ def test_ambiguous_auxiliary_variables_are_not_silently_selected(published):
     "minimum,passes", [(-1e-8, True), (-1e-7, True), (-1.01e-7, False), (-1e-4, False)]
 )
 def test_product_weight_tolerance_has_a_real_failure_boundary(published, minimum, passes):
-    from datakit.schema._standard_products import WEIGHT_NPY
+    from pipelines.dataset_building.definitions._standard_products import WEIGHT_NPY
 
     path, spec = published
     spec = replace(

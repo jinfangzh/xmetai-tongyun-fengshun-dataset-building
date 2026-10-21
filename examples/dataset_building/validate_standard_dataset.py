@@ -11,10 +11,10 @@ import signal
 import sys
 from uuid import uuid4
 
-from pipelines.dataset import validate_standard_dataset
-from datakit.validation import to_jsonable
-from ._standard_config import load_profile, read_json
-from ._standard_reports import report_exit_code, write_reports
+from pipelines.dataset_building import validate_standard_dataset
+from pipelines.dataset_building.validation.reports import to_jsonable
+from pipelines.dataset_building.config import load_profile, read_json
+from pipelines.dataset_building.reporting import report_exit_code, write_reports
 
 
 def main(argv: list[str] | None = None) -> int:

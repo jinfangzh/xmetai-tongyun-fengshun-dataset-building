@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
-from datakit.schema.standard_dataset import AuxiliaryDefinition, DatasetValidationSpec
+from ..definitions.standard_dataset import AuxiliaryDefinition, DatasetValidationSpec
 from .reports import ValidationReport
 from .standard_dataset import STANDARD
 

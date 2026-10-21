@@ -25,12 +25,12 @@ from datakit.io._zarr_inspection import (
     read_zarr_metadata,
     zarr_chunk_path,
 )
-from datakit.schema.standard_dataset import DatasetValidationSpec
-from datakit.validation._standard_auxiliary import check_standard_auxiliary
-from datakit.validation._standard_quality import StandardQualityAccumulator
-from datakit.validation.evidence import attach_standard_evidence
-from datakit.validation.reports import ValidationReport
-from datakit.validation.standard_dataset import STANDARD, check_standard_dataset
+from .definitions.standard_dataset import DatasetValidationSpec
+from .validation._standard_auxiliary import check_standard_auxiliary
+from .validation._standard_quality import StandardQualityAccumulator
+from .validation.evidence import attach_standard_evidence
+from .validation.reports import ValidationReport
+from .validation.standard_dataset import STANDARD, check_standard_dataset
 
 from ._standard_scan import scan_standard_blocks
 from ._validation_runtime import _peak_memory_bytes, _resident_memory_bytes

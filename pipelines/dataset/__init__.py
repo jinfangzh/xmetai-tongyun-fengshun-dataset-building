@@ -1,6 +1,6 @@
 """Path-level pipelines for building and inspecting reusable datasets.
 
-This module is the only public pipeline surface.  It combines the package's
+This module exposes the established dataset pipeline surface. It combines the package's
 explicit IO, in-memory processing, statistics, validation and radar modules;
 it does not provide a workflow engine, registry, CLI or configuration layer.
 """
@@ -31,8 +31,13 @@ from ._radar import (
 )
 from ._raw_truth import extract_raw_truth_day
 from ._validation import validate_zarr_netcdf_consistency
-from ._standard_validation import validate_standard_dataset
-from ._standard_comparison import validate_standard_conversion, validate_standard_combination
+
+# Keep the established path-level API while feature implementation stays isolated.
+from pipelines.dataset_building import (
+    validate_standard_dataset,
+    validate_standard_conversion,
+    validate_standard_combination,
+)
 from ._statistics import (
     build_difference_statistics,
     build_grouped_zarr_quantiles,

@@ -1,6 +1,6 @@
 {
   "source_path": "/path/to/frozen-source/land.zarr",
-  "target_profile": "examples/validation/profiles/era5_land_c8_1p5_h24.json",
+  "target_profile": "examples/dataset_building/configs/profiles/era5_land_c8_1p5_h24.json",
   "conversion": {
     "source_identity": "REPLACE_WITH_APPROVED_SOURCE_ID",
     "source_snapshot_id": "REPLACE_WITH_APPROVED_SOURCE_SNAPSHOT",

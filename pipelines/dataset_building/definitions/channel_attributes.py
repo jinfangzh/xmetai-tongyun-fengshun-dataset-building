@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 
 from .era5_c116 import DERIVED, DYNAMIC_CHANNELS, SOIL, WAVE
-from .variables import ACCUMULATED_VARIABLES
+from datakit.schema.variables import ACCUMULATED_VARIABLES
 
 CHANNEL_INFO_SCHEMA_VERSION = "1.0"
 DEFAULT_RADIATION_SECONDS = 21600.0
@@ -122,7 +122,7 @@ def split_channel(
     text = str(channel)
     # Known surface/soil labels containing digits are complete variable names.
     # The generic suffix fallback remains for legacy callers; strict product
-    # declarations use build_standard_channel_info instead.
+    # declarations are maintained separately in the dataset-building workflow.
     if text in VARIABLE_METADATA:
         return text, None
     for variable in pressure_variables:

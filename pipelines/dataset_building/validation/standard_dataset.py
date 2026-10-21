@@ -8,7 +8,7 @@ from numbers import Real
 import numpy as np
 import xarray as xr
 
-from datakit.schema.standard_dataset import DatasetValidationSpec
+from ..definitions.standard_dataset import DatasetValidationSpec
 from .reports import ValidationReport
 
 STANDARD = "standard_conformance"

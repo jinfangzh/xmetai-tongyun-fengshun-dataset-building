@@ -10,9 +10,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from datakit.schema._standard_products import define_channels
-from datakit.schema.dataset_products import get_dataset_product
-from datakit.schema.standard_dataset import STANDARD_LAND_SEA_MASK
+from pipelines.dataset_building.definitions._standard_products import define_channels
+from pipelines.dataset_building.definitions.dataset_products import get_dataset_product
+from pipelines.dataset_building.definitions.standard_dataset import STANDARD_LAND_SEA_MASK
 
 
 @pytest.mark.parametrize(
@@ -29,9 +29,9 @@ from datakit.schema.standard_dataset import STANDARD_LAND_SEA_MASK
     ],
 )
 def test_product_modules_expose_the_same_public_declarations(module_name, product_id):
-    from datakit.schema import DatasetProduct, DatasetVariant, MaskDefinition
+    from pipelines.dataset_building.definitions import DatasetProduct, DatasetVariant, MaskDefinition
 
-    module = importlib.import_module(f"datakit.schema.{module_name}")
+    module = importlib.import_module(f"pipelines.dataset_building.definitions.{module_name}")
     assert isinstance(module.CHANNELS, tuple)
     assert all(isinstance(name, str) for name in module.CHANNELS)
     assert isinstance(module.MASK, MaskDefinition)
@@ -44,12 +44,19 @@ def test_product_modules_expose_the_same_public_declarations(module_name, produc
     assert module.PRODUCT.variants is module.VARIANTS
 
 
-def test_era5_c116_legacy_production_exports_remain_compatible():
-    from datakit.schema import DYNAMIC_CHANNELS, TARGET_LAT, TARGET_LON, era5_c116
-    from datakit.schema.dataset_products import ERA5_C116
+def test_era5_c116_production_definitions_are_preserved_in_the_pipeline():
+    from pipelines.dataset_building.definitions import era5_c116
+    from pipelines.dataset_building.definitions.dataset_products import ERA5_C116
+    from pipelines.dataset_building.definitions.era5_c116 import (
+        CHANNELS,
+        DYNAMIC_CHANNELS,
+        PRODUCT,
+        TARGET_LAT,
+        TARGET_LON,
+    )
 
-    assert ERA5_C116 is era5_c116.PRODUCT
-    assert DYNAMIC_CHANNELS is era5_c116.CHANNELS
+    assert ERA5_C116 is PRODUCT
+    assert DYNAMIC_CHANNELS is CHANNELS
     assert era5_c116.CHANNEL_COUNT == 116
     assert era5_c116.BASE_LEVELS == (
         1000,
@@ -74,14 +81,14 @@ def test_era5_c116_legacy_production_exports_remain_compatible():
     assert era5_c116.GROUPS["swvl1"] == "soil"
 
 
-def test_schema_imports_initialize_in_a_fresh_process():
+def test_dataset_building_definitions_initialize_in_a_fresh_process():
     import subprocess
     import sys
 
     code = (
-        "from datakit.schema._standard_products import define_channels; "
-        "from datakit.schema.era5_c116 import PRODUCT; "
-        "from datakit.schema import get_dataset_product; "
+        "from pipelines.dataset_building.definitions._standard_products import define_channels; "
+        "from pipelines.dataset_building.definitions.era5_c116 import PRODUCT; "
+        "from pipelines.dataset_building.definitions import get_dataset_product; "
         "assert PRODUCT is get_dataset_product('era5.c116'); "
         "assert len(define_channels(('t2m',))) == 1"
     )
@@ -92,6 +99,17 @@ def test_schema_imports_initialize_in_a_fresh_process():
         cwd=Path(__file__).resolve().parents[2],
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_raw_truth_extraction_uses_the_migrated_c116_definitions():
+    from pipelines.dataset import _raw_truth
+    from pipelines.dataset_building.definitions.era5_c116 import CHANNELS
+
+    assert _raw_truth._resolve_channels(None) == CHANNELS
+    assert _raw_truth._source_spec("t850") == ("pl", "t", "t", 850)
+    assert _raw_truth._source_spec("w10") == ("pl", "w", "w", 10)
+    assert _raw_truth._source_spec("swvl1") == ("soil", "vsw1", "swvl1", None)
+    assert _raw_truth._source_spec("wmb") == ("wave", "wmb", "wmb", None)
 
 
 def test_product_semantics_are_explicit_and_versioned():
@@ -135,9 +153,9 @@ def test_product_semantics_are_explicit_and_versioned():
 
 
 def test_ten_profiles_are_complete_structural_specs():
-    from examples.validation._standard_config import load_profile
+    from pipelines.dataset_building.config import load_profile
 
-    directory = Path(__file__).resolve().parents[2] / "examples/validation/profiles"
+    directory = Path(__file__).resolve().parents[2] / "examples/dataset_building/configs/profiles"
     inventory = json.loads((directory / "inventory.json").read_text())
     assert len(inventory["profiles"]) == 10
     expected_counts = [69448, 16802, 17167, 24472, 67208, 2308, 27394, 11688, 11688, 27866]
@@ -156,7 +174,7 @@ def test_ten_profiles_are_complete_structural_specs():
 
 
 def test_known_soil_metadata_and_std_infinity_are_not_accepted_as_truth():
-    from datakit.schema import build_channel_info
+    from pipelines.dataset_building.definitions.channel_attributes import build_channel_info
 
     names = ("stl3", "swvl4", "q2m", "u10m", "t2m_min")
     info = build_channel_info(names, mean=np.zeros(5, dtype="f4"), std=np.ones(5, dtype="f4"))
@@ -168,12 +186,12 @@ def test_known_soil_metadata_and_std_infinity_are_not_accepted_as_truth():
 
 
 def test_all_product_orders_match_independently_approved_server_baseline():
-    from examples.validation._standard_config import load_profile
+    from pipelines.dataset_building.config import load_profile
 
     root = Path(__file__).resolve().parents[2]
     records = json.loads((root / "docs/validation/PRODUCT_BASELINE_2026-10-13.json").read_text())
     observations = {record["dataset_id"]: record for record in records}
-    inventory = root / "examples/validation/profiles/inventory.json"
+    inventory = root / "examples/dataset_building/configs/profiles/inventory.json"
     for filename in json.loads(inventory.read_text())["profiles"]:
         spec, _ = load_profile(inventory.parent / filename)
         observed = observations[spec.dataset_id]
@@ -184,7 +202,7 @@ def test_all_product_orders_match_independently_approved_server_baseline():
 
 
 def test_each_product_declares_the_same_mask_contract_with_its_own_grid():
-    from datakit.schema.dataset_products import STANDARD_PRODUCTS
+    from pipelines.dataset_building.definitions.dataset_products import STANDARD_PRODUCTS
 
     for product in STANDARD_PRODUCTS:
         assert product.mask is STANDARD_LAND_SEA_MASK

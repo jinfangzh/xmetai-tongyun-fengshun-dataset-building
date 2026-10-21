@@ -12,9 +12,9 @@ from typing import Any, Callable
 import numpy as np
 
 from datakit.io._zarr_inspection import expected_zarr_blocks, read_zarr_block, zarr_chunk_path
-from datakit.schema.standard_dataset import DatasetValidationSpec
-from datakit.validation._standard_quality import StandardQualityAccumulator
-from datakit.validation.reports import ValidationReport
+from .definitions.standard_dataset import DatasetValidationSpec
+from .validation._standard_quality import StandardQualityAccumulator
+from .validation.reports import ValidationReport
 from ._validation_runtime import _fingerprint, _resident_memory_bytes
 
 INTEGRITY = "data_integrity"

@@ -20,9 +20,9 @@ import xarray as xr
 import zarr
 
 from datakit.io._zarr_inspection import consolidated_mismatches, file_sha256, read_zarr_metadata
-from datakit.validation.evidence import CONSUMER_CHECKS
-from datakit.validation import to_jsonable
-from ._standard_config import load_profile, read_json
+from pipelines.dataset_building.validation.evidence import CONSUMER_CHECKS
+from pipelines.dataset_building.validation.reports import to_jsonable
+from pipelines.dataset_building.config import load_profile, read_json
 
 
 def run_consumer(config: dict, config_sha256: str) -> dict:

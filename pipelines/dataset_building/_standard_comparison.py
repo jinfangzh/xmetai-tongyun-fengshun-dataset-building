@@ -22,10 +22,10 @@ from datakit.io._zarr_inspection import (
     read_zarr_block,
     zarr_chunk_path,
 )
-from datakit.schema.standard_dataset import ConversionValidationSpec, DatasetValidationSpec
-from datakit.validation.standard_comparison import compare_standard_channel_values
-from datakit.validation.standard_dataset import check_standard_time_alignment
-from datakit.validation import to_jsonable
+from .definitions.standard_dataset import ConversionValidationSpec, DatasetValidationSpec
+from .validation.standard_comparison import compare_standard_channel_values
+from .validation.standard_dataset import check_standard_time_alignment
+from .validation.reports import to_jsonable
 
 
 def validate_standard_conversion(

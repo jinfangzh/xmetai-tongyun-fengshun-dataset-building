@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from datakit.validation import ValidationReport, to_jsonable
+from pipelines.dataset_building.validation.reports import ValidationReport, to_jsonable
 
 
 def test_json_conversion_preserves_nonfinite_diagnostics_without_invalid_json():

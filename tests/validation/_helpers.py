@@ -7,7 +7,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
-from datakit.schema.standard_dataset import DatasetValidationSpec, EvidenceReference
+from pipelines.dataset_building.definitions.standard_dataset import DatasetValidationSpec, EvidenceReference
 
 
 def _receipt(path: Path, spec: DatasetValidationSpec) -> DatasetValidationSpec:

@@ -2,11 +2,12 @@
 
 当前校验条款见 [标准数据集校验计划](VALIDATION_PLAN.md)，运行、依赖及报告阅读方法见
 [程序使用说明](../DATASET_VALIDATION.md)。实例配置位于
-[`examples/validation/profiles`](../../examples/validation/profiles)，每套独立选择产品和批次。
+[`examples/dataset_building/configs/profiles`](../../examples/dataset_building/configs/profiles)，每套独立选择产品和批次。
 
-每个产品 schema 均提供 `CHANNELS`、`MASK`、`VARIANTS`、`PRODUCT`，类型及声明顺序一致。
+流程内每个产品定义均提供 `CHANNELS`、`MASK`、`VARIANTS`、`PRODUCT`，类型及声明顺序一致。
 完整 `PRODUCT` 在对应产品文件中用具名参数声明；产品汇总文件只负责导入和选择。
-已有生产接口可作为兼容名称保留，多版本产品另行显式声明版本，不改变默认选择。
+已有生产常量名称在流程内保留，c116 的来源映射和元数据生成代码也位于流程内；
+旧公共 schema 导入路径撤出。多版本产品另行显式声明版本，不改变默认选择。
 
 | 文件 | 用途 |
 |---|---|

@@ -7,12 +7,12 @@ from dataclasses import replace
 import numpy as np
 import zarr
 
-from datakit.schema.standard_dataset import (
+from pipelines.dataset_building.definitions.standard_dataset import (
     STANDARD_LAND_SEA_MASK,
     AuxiliaryDefinition,
     MaskDefinition,
 )
-from pipelines.dataset import validate_standard_dataset
+from pipelines.dataset_building import validate_standard_dataset
 
 from ._helpers import _checks
 

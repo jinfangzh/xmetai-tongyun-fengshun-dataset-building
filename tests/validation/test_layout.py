@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import zarr
 
-from pipelines.dataset import validate_standard_dataset
+from pipelines.dataset_building import validate_standard_dataset
 
 from ._helpers import _assert_counts, _checks
 

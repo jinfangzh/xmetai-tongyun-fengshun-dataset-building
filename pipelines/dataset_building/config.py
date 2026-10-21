@@ -1,4 +1,4 @@
-"""Example-only JSON configuration; the datakit library accepts typed specs."""
+"""Load dataset-building JSON profiles into the workflow's typed specs."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from datakit.schema import (
+from .definitions import (
     DatasetValidationSpec,
     EvidenceReference,
     QualityRule,

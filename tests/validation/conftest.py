@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import zarr
 
-from datakit.schema.standard_dataset import (
+from pipelines.dataset_building.definitions.standard_dataset import (
     ChannelDefinition,
     DatasetProduct,
     DatasetValidationSpec,

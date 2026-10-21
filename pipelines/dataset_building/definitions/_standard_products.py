@@ -4,7 +4,7 @@ This strict definition path does not infer unknown digit suffixes or use the
 permissive channel metadata generator as validation ground truth.
 """
 
-from .dimensions import LEVELS_13
+from datakit.schema.dimensions import LEVELS_13
 from .standard_dataset import AuxiliaryDefinition as Aux, ChannelDefinition
 
 # Common product constants must not depend on an individual product module.

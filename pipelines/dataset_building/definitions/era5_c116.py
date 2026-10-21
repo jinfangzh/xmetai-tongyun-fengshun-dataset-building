@@ -1,4 +1,4 @@
-"""ERA5 c116 product standard and compatible production source mappings."""
+"""ERA5 c116 product standard and production source mappings."""
 
 from __future__ import annotations
 

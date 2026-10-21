@@ -8,10 +8,10 @@ from pathlib import Path
 import signal
 
 from datakit.io import file_sha256
-from pipelines.dataset import validate_standard_conversion
-from datakit.schema import ConversionChannelRule, ConversionValidationSpec, EvidenceReference
-from datakit.validation import to_jsonable
-from ._standard_config import load_profile, read_json
+from pipelines.dataset_building import validate_standard_conversion
+from pipelines.dataset_building.definitions import ConversionChannelRule, ConversionValidationSpec, EvidenceReference
+from pipelines.dataset_building.validation.reports import to_jsonable
+from pipelines.dataset_building.config import load_profile, read_json
 
 
 def main() -> int:

@@ -11,8 +11,8 @@ from pathlib import Path
 import numpy as np
 import zarr
 
-from datakit.schema.dataset_products import get_dataset_product
-from datakit.schema.standard_dataset import (
+from pipelines.dataset_building.definitions.dataset_products import get_dataset_product
+from pipelines.dataset_building.definitions.standard_dataset import (
     DatasetValidationSpec,
     QualityRule,
     build_standard_channel_info,
@@ -114,7 +114,7 @@ def test_cli_runs_independent_published_land_fixture(published, tmp_path):
     command = [
         sys.executable,
         "-m",
-        "examples.validation.validate_standard_dataset",
+        "examples.dataset_building.validate_standard_dataset",
         "--profile",
         str(profile),
         "--mode",
