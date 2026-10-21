@@ -1,5 +1,4 @@
-"""Migrated evaluation configuration; paths may be overridden by the tests.
-Uses the single-day integration fixture; upstream multi-period scheduling is not required here.
+"""Evaluation configuration with overridable input and output paths.
 """
 
 import os
@@ -12,7 +11,7 @@ cfg = EvalConfig(
     pipeline="weather_ts_det",
     forecast_reader={
         "type": "fuxi",
-        "root_dir": os.environ.get("FGVP_OUTPUT", "/workspace/data/shenzw/fgvp_output"),
+        "root_dir": os.environ.get("FGVP_OUTPUT", "/workspace/data/shenzw/tongyun_single"),
         "variable": "tp",
         "step_hours": 6.0,
         "lead_times": None,
@@ -39,7 +38,7 @@ cfg = EvalConfig(
     },
     limit=None,
     output_dir=os.environ.get(
-        "EVAL_OUTPUT", "/workspace/szwCode/evaluation_results/weather_ts_single_fgvp"
+        "EVAL_OUTPUT", "/workspace/szwCode/evaluation_results/weather_ts_single_tongyun"
     ),
     log_level="INFO",
     execution={
@@ -50,6 +49,6 @@ cfg = EvalConfig(
         "loads": {"observation": "resident"},
         "resume": True,
     },
-    start_date="20250102",
-    end_date="20250102",
+    start_date="20251001",
+    end_date="20251031",
 )

@@ -52,7 +52,7 @@ def _run(output_dir: Path) -> Path:
     from pipelines.evaluation.cli import run_evaluation
     from pipelines.evaluation.config import load_config
 
-    cfg = load_config("weather_ts_single_fgvp")
+    cfg = load_config("weather_ts_single_tongyun")
     cfg.forecast_reader = {
         **cfg.forecast_reader,
         "root_dir": _DATA_PATHS["FGVP_OUTPUT"],

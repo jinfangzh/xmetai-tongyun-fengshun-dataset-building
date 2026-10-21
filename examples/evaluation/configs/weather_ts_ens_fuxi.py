@@ -1,4 +1,4 @@
-"""Migrated evaluation configuration; paths may be overridden by the tests."""
+"""Evaluation configuration with overridable input and output paths."""
 
 import os
 from pipelines.evaluation.config import EvalConfig
