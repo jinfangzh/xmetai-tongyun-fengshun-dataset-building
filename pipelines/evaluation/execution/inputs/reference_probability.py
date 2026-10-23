@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""BSS 外部气候概率参考 Reader（ref/MMDDHH.000）。
+"""BSS 外部气候概率参考数据源（ref/MMDDHH.000）。
 
 对标 ``ref/tiqnqi/xmetai_model_verification/vfc/station_categorical.py::RefProb``：
 
@@ -10,42 +10,49 @@
 
 from __future__ import annotations
 
-import glob
-import os
 from typing import Dict
 
 import numpy as np
 
+from datakit import io
 from datakit.evaluation.errors import ConfigError
 
-#: ref 文件的 4 列概率对应阈值（超越式口径，顺序固定，与 DEFAULT_AROC_THRESHOLDS 一致）
-REF_THRESHOLDS = [0.1, 4.0, 13.0, 25.0]
 
-
-class RefProbabilityReader:
+class RefProbabilitySource:
     """BSS 的逐 6h 气候概率参考（按验证时刻北京时查表）。
 
     不是格点/时间序列数据，因此不走 Catalog/DataBundle 协议；暴露
     ``probabilities(when, station_ids)`` 供站点协议直接查表。
     """
 
-    def __init__(self, root_dir, source_id: str = "ref_probability"):
+    def __init__(
+        self,
+        root_dir,
+        source_id: str = "ref_probability",
+        description="station_probability",
+    ):
         self.source_id = source_id
         self.root_dir = str(root_dir)
-        self._index: Dict[str, str] = {}  # MMDDHH -> 文件路径
+        source = io.open(root_dir, description)
+        self._thresholds = list(source.description["thresholds"])
         self._cache: Dict[str, Dict[int, np.ndarray]] = {}
-        for path in glob.glob(os.path.join(self.root_dir, "*.000")):
-            self._index[os.path.basename(path)[:6]] = path
-        if not self._index:
-            raise ConfigError(f"ref 目录 {self.root_dir} 下无 .000 文件")
+        try:
+            records = source.discover(all_files=True)
+        except FileNotFoundError as exc:
+            raise ConfigError(f"ref 目录 {self.root_dir} 下无 .000 文件") from exc
+        self._index = {
+            record.fields["cycle_time"]: str(record.path) for record in records
+        }
 
     @property
     def thresholds(self):
-        return list(REF_THRESHOLDS)
+        return list(self._thresholds)
 
     def _load(self, key: str) -> Dict[int, np.ndarray]:
         if key not in self._cache:
             a = np.loadtxt(self._index[key], ndmin=2)
+            if a.shape[1] != len(self._thresholds) + 1:
+                raise ConfigError(f"ref {key} 的列数与描述中的阈值不一致")
             self._cache[key] = {int(sid): a[i, 1:] for i, sid in enumerate(a[:, 0])}
         return self._cache[key]
 
@@ -58,7 +65,7 @@ class RefProbabilityReader:
         if key not in self._index:
             raise ConfigError(f"ref 缺少时次 {key}（{when}）")
         table = self._load(key)
-        out = np.full((len(station_ids), len(REF_THRESHOLDS)), np.nan, dtype="f8")
+        out = np.full((len(station_ids), len(self._thresholds)), np.nan, dtype="f8")
         for i, sid in enumerate(station_ids):
             row = table.get(int(sid))
             if row is not None:

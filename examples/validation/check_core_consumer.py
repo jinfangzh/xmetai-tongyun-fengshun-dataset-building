@@ -19,7 +19,7 @@ import pandas as pd
 import xarray as xr
 import zarr
 
-from datakit.io._zarr_inspection import consolidated_mismatches, file_sha256, read_zarr_metadata
+from datakit.validation.zarr_inspection import consolidated_mismatches, file_sha256, read_zarr_metadata
 from datakit.validation.evidence import CONSUMER_CHECKS
 from datakit.validation import to_jsonable
 from ._standard_config import load_profile, read_json

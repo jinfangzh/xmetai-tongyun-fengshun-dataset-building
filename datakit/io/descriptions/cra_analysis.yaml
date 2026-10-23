@@ -1,0 +1,9 @@
+name: cra_analysis
+implementation: grouped_time_files
+layout:
+  directory: "{time:%Y%m%d}"
+  files:
+    atmosphere: "ART_ATM_GLB_0P25_6HOR_ANAL_{time:%Y%m%d%H}.grib2"
+    land: "CRA40LAND_SURFACE_{time:%Y%m%d%H}_GLB_0P25_HOUR_V1_0_0.grib"
+example: "20250101/ART_ATM_GLB_0P25_6HOR_ANAL_2025010100.grib2"
+notes: "描述现有CRA分析归档，不代表所有CRA组织。异构GRIB消息通过调用参数选择；无法兼容合并时报错，不猜测或改名为标准变量。"

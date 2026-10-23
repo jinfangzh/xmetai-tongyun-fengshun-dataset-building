@@ -85,7 +85,7 @@ def write_synthetic_fuxi_ens_phys(
 
 
 def _write_zarr_store(path: Path, channel: str, values: np.ndarray) -> Path:
-    """Write the minimal native store shape consumed by Era5ZarrReader.
+    """Write the minimal native store shape consumed by Era5ZarrSource.
 
     Zarr 2 exposes ``Group.create_dataset`` while Zarr 3 uses
     ``Group.create_array``.  The production reader supports both generations,

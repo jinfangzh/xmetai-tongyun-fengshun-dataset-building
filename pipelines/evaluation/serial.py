@@ -30,7 +30,7 @@ from datakit.evaluation.matching import (
     add_derived_variables,
     narrow_batch,
 )
-from datakit.io.readers.layouts import CRA_LAYOUT, FENGQING_LAYOUT
+from datakit.schema.dataset_profiles import CRA_LAYOUT, FENGQING_LAYOUT
 from datakit.transforms.spatial import align_lon_to, align_to_grid
 
 

@@ -12,6 +12,7 @@ dependencies = [
   "numpy>=1.24",
   "numcodecs>=0.14",
   "pandas>=1.5",
+  "pyyaml>=5.4",
   "xarray>=2023.1",
   "zarr>=3.1.6,<4",
 ]
@@ -55,6 +56,9 @@ all = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["datakit*", "pipelines*"]
+
+[tool.setuptools.package-data]
+"datakit.io.descriptions" = ["*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

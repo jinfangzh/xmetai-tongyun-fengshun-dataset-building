@@ -9,9 +9,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from datakit.io import read_netcdf, read_zarr, write_netcdf, write_zarr
+from datakit import io as dataset_io
 from datakit.validation import RangeReport, analyze_range
-
 from pipelines.dataset import (
     DatasetInfo,
     RadarContinuityReport,
@@ -25,8 +24,8 @@ from pipelines.dataset import (
     convert_ensemble_netcdf_to_zarr,
     convert_meteonet_npz_to_zarr,
     convert_to_zarr,
-    extract_zarr_to_netcdf,
     extract_raw_truth_day,
+    extract_zarr_to_netcdf,
     inspect_zarr_datasets,
 )
 
@@ -57,8 +56,7 @@ def save_by_year(
         path = destination / f"{year}{suffix}"
         if path.exists() and not overwrite:
             raise FileExistsError(path)
-        writer = write_zarr if format_name == "zarr" else write_netcdf
-        outputs.append(writer(subset, path))
+        outputs.append(dataset_io.open(path).write(subset, mode="w")[0])
     return outputs
 
 
@@ -71,7 +69,7 @@ def check_zarr_range(
 ) -> RangeReport:
     """Open a Zarr store and calculate a range report for one variable."""
 
-    opened = read_zarr(path)
+    opened = dataset_io.open(path).read()
     try:
         if isinstance(opened, xr.DataArray):
             array = opened
@@ -106,7 +104,7 @@ def split_netcdf_by_time_and_channel(
         opened = source
         should_close = False
     else:
-        opened = read_netcdf(source)
+        opened = dataset_io.open(source).read(load=True)
         should_close = True
 
     try:
@@ -139,7 +137,7 @@ def split_netcdf_by_time_and_channel(
                 out_path = out_dir / f"{day_str}.nc"
                 if out_path.exists() and not overwrite:
                     raise FileExistsError(out_path)
-                outputs.append(write_netcdf(level_ds, out_path, engine=engine))
+                outputs.append(dataset_io.open(out_path).write(level_ds, mode="w", engine=engine)[0])
         return outputs
     finally:
         if should_close and hasattr(opened, "close"):

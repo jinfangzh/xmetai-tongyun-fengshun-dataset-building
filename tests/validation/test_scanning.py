@@ -8,7 +8,7 @@ from dataclasses import replace
 import numpy as np
 import zarr
 
-from datakit.io._zarr_inspection import read_zarr_metadata, zarr_chunk_path
+from datakit.validation.zarr_inspection import read_zarr_metadata, zarr_chunk_path
 from pipelines.dataset import _standard_scan, _standard_validation, validate_standard_dataset
 
 from ._helpers import _assert_counts, _checks, _receipt

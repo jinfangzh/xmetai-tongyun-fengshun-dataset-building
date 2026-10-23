@@ -2,30 +2,32 @@
 
 from __future__ import annotations
 
+import json
+import math
 from contextlib import ExitStack
 from dataclasses import asdict
-import math
-import json
 from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
 import xarray as xr
 
-from datakit.io._zarr_inspection import (
+from datakit.schema.standard_dataset import (
+    ConversionValidationSpec,
+    DatasetValidationSpec,
+)
+from datakit.validation import to_jsonable
+from datakit.validation.standard_comparison import compare_standard_channel_values
+from datakit.validation.standard_dataset import check_standard_time_alignment
+from datakit.validation.zarr_inspection import (
     expected_zarr_blocks,
     file_sha256,
     metadata_digest,
-    read_zarr_metadata,
-    physical_layout_supported,
     open_zarr_array_readonly,
-    read_zarr_block,
+    physical_layout_supported,
+    read_zarr_metadata,
     zarr_chunk_path,
 )
-from datakit.schema.standard_dataset import ConversionValidationSpec, DatasetValidationSpec
-from datakit.validation.standard_comparison import compare_standard_channel_values
-from datakit.validation.standard_dataset import check_standard_time_alignment
-from datakit.validation import to_jsonable
 
 
 def validate_standard_conversion(
@@ -248,12 +250,8 @@ def validate_standard_conversion(
                         zarr_chunk_path(before_target, "data", (int(ti), 0, 0, 0)).is_file()
                         and storage_ok
                     )
-                    sb = read_zarr_block(
-                        source_array, (slice(si, si + 1), slice(None), slice(None), slice(None))
-                    )
-                    tb = read_zarr_block(
-                        target_array, (slice(ti, ti + 1), slice(None), slice(None), slice(None))
-                    )
+                    sb = np.asarray(source_array[(slice(si, si + 1), slice(None), slice(None), slice(None))])
+                    tb = np.asarray(target_array[(slice(ti, ti + 1), slice(None), slice(None), slice(None))])
                     if conversion.latitude_flip:
                         sb = sb[:, :, ::-1, :]
                     for ci, rule in enumerate(rules):

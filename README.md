@@ -134,20 +134,20 @@ pytest -q
 再将路径替换为自己的文件：
 
 ```python
-from datakit.io import read_netcdf, write_zarr
+from datakit import io
 from datakit.transforms import normalize_coordinates
 
-source = read_netcdf("input.nc")
+source = io.open("input.nc").read(load=True)
 normalized = normalize_coordinates(source)
-write_zarr(normalized, "dataset.zarr", chunks={"time": 1})
+io.open("dataset.zarr").write(normalized, chunks={"time": 1})
 ```
 
 打开结果并检查变量、维度和坐标：
 
 ```python
-from datakit.io import read_zarr
+from datakit import io
 
-dataset = read_zarr("dataset.zarr")
+dataset = io.open("dataset.zarr").read()
 print(dataset)
 ```
 
@@ -158,7 +158,7 @@ print(dataset)
 | 读取或写入 NetCDF、GRIB、NumPy、Zarr | `datakit.io` |
 | 规范坐标、变量名、单位和归一化 | `datakit.transforms` |
 | 裁剪、插值和重采样 | `datakit.transforms` |
-| 计算均值、标准差、分位数和气候态 | `datakit.statistics` |
+| 计算均值、标准差、分位数和气候态 | `pipelines.dataset` |
 | 检查 schema、缺测、时间连续性和数值范围 | `datakit.validation` |
 | 制作可复用 Zarr 数据集产物 | `pipelines.dataset` |
 | 处理 CINRAD 或 MeteoNet 雷达数据 | `datakit.radar` |
@@ -170,14 +170,14 @@ CDS 与 Copernicus Marine 下载方案分别见
 
 ## 基础调用
 
-显式选择格式接口：
+通过统一的数据访问对象读写：
 
 ```python
-from datakit.io import read_netcdf, read_zarr, write_zarr
+from datakit import io
 
-source = read_netcdf("input.nc")
-write_zarr(source, "dataset.zarr", chunks={"time": 1})
-opened = read_zarr("dataset.zarr")
+source = io.open("input.nc").read(load=True)
+io.open("dataset.zarr").write(source, chunks={"time": 1})
+opened = io.open("dataset.zarr").read()
 ```
 
 在内存中处理数据：
@@ -192,10 +192,8 @@ data = resize(data, resolution=0.25)
 计算基础统计：
 
 ```python
-from datakit.statistics import climate_slot_mean, compute_mean_std
-
-mean, std = compute_mean_std(data)
-climatology = climate_slot_mean(data)
+mean = data.mean(dim=("time", "lat", "lon"), skipna=True)
+std = data.std(dim=("time", "lat", "lon"), skipna=True)
 ```
 
 ## 数据集 pipeline

@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
 import json
 import os
-from pathlib import Path
 import re
-from typing import Any
 from collections.abc import Sequence
+from datetime import date, timedelta
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import xarray as xr
 
-from datakit.io import open_netcdf_dataset
+from datakit import io as dataset_io
 from datakit.schema import (
     DERIVED,
     DYNAMIC_CHANNELS,
@@ -85,7 +85,7 @@ def _source_variable(dataset: xr.Dataset, logical: str) -> str:
 
 
 def _open_selected(path: Path, logical: str, day: date) -> xr.Dataset:
-    with open_netcdf_dataset(path, engine="netcdf4", cache=False) as original:
+    with dataset_io.open(path).read(engine="netcdf4", cache=False) as original:
         time_name = _coordinate_name(original, ("valid_time", "time"))
         lat_name = _coordinate_name(original, ("latitude", "lat"))
         lon_name = _coordinate_name(original, ("longitude", "lon"))

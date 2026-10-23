@@ -1,0 +1,7 @@
+name: babj
+implementation: babj
+layout:
+  pattern: "babj*.dat"
+time_zone: "Asia/Shanghai"
+example: "babj2501.dat"
+notes: "轨迹编号和时间从报文内读取。保留所有时效和额外数值列，不默认筛选分析记录。写回依赖读取保留的报文头和文件名。"

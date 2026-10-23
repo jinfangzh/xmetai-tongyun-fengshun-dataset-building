@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 from datetime import date
 from pathlib import Path
-import shutil
 
 import xarray as xr
 
-from datakit.io import read_netcdf, read_zarr
-from pipelines.dataset import convert_to_zarr
+from datakit import io as dataset_io
 from datakit.transforms import normalize_xarray, preprocess_channel_units
-
+from pipelines.dataset import convert_to_zarr
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -48,7 +47,7 @@ def _parse_cli_date(value: str | None) -> date | None:
 
 
 def _load_stat_array(path: Path, variable: str) -> xr.DataArray:
-    opened = read_netcdf(path)
+    opened = dataset_io.open(path).read(load=True)
     try:
         value = opened if isinstance(opened, xr.DataArray) else opened[variable]
         if "channel" not in value.dims:
@@ -60,7 +59,7 @@ def _load_stat_array(path: Path, variable: str) -> xr.DataArray:
 
 
 def _load_any_array(path: Path, variable: str) -> xr.DataArray:
-    opened = read_netcdf(path)
+    opened = dataset_io.open(path).read(load=True)
     try:
         return (opened if isinstance(opened, xr.DataArray) else opened[variable]).load()
     finally:
@@ -96,7 +95,7 @@ def main() -> None:
     requested_channels = [item.strip() for item in args.channels.split(",") if item.strip()]
 
     for file in nc_files:
-        ds = read_netcdf(file)
+        ds = dataset_io.open(file).read(load=True)
 
         if isinstance(ds, xr.DataArray):
             ds = ds.to_dataset(name=ds.name or "data")
@@ -161,7 +160,7 @@ def main() -> None:
     print(destination)
     print("\n读取 Zarr")
 
-    opened = read_zarr(destination)
+    opened = dataset_io.open(destination).read()
     try:
         print(opened)
     finally:

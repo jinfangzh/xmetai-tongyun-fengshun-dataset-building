@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-import re
 from typing import Any
 
 import numpy as np
 import xarray as xr
 
-from datakit.io import read_netcdf, read_zarr
+from datakit import io as dataset_io
 from datakit.schema import (
     ACCUMULATED_VARIABLES,
     LAND_VARIABLES,
@@ -98,7 +98,7 @@ def _load_sidecar(
     netcdf_path = source / f"{name}.nc" if source is not None else None
     numpy_path = source / f"{name}.npy" if source is not None else None
     if netcdf_path is not None and netcdf_path.is_file():
-        opened = read_netcdf(netcdf_path)
+        opened = dataset_io.open(netcdf_path).read(load=True)
         try:
             return _one_dimensional_sidecar(opened, channels, name=name)
         finally:
@@ -123,7 +123,7 @@ def _load_field(
     netcdf_path = source / f"{name}.nc" if source is not None else None
     numpy_path = source / f"{name}.npy" if source is not None else None
     if netcdf_path is not None and netcdf_path.is_file():
-        opened = read_netcdf(netcdf_path)
+        opened = dataset_io.open(netcdf_path).read(load=True)
         try:
             if isinstance(opened, xr.Dataset):
                 if len(opened.data_vars) != 1:
@@ -175,7 +175,7 @@ def inspect_zarr_datasets(
 
     for raw_source in sources:
         source = Path(raw_source).expanduser()
-        dataset = read_zarr(raw_source, consolidated=consolidated)
+        dataset = dataset_io.open(raw_source).read(consolidated=consolidated)
         try:
             array = _data_array(dataset, variable)
             dimension = _channel_dimension(array)

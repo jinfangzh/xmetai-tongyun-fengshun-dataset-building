@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-from contextlib import ExitStack
-from datetime import datetime, timezone
 import hashlib
 import json
 import math
-from pathlib import Path
 import time
+from contextlib import ExitStack
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
 import xarray as xr
 
-from datakit.io import open_netcdf_dataset
-from datakit.io._zarr_inspection import (
+from datakit import io as dataset_io
+from datakit.validation.zarr_inspection import (
     consolidated_mismatches,
     expected_zarr_blocks,
     file_sha256,
@@ -416,7 +416,7 @@ def validate_standard_dataset(
                         check_standard_auxiliary(values, definition, spec, mask, report)
                         del values
                     else:
-                        with open_netcdf_dataset(file, mask_and_scale=False) as obj:
+                        with dataset_io.open(file).read(mask_and_scale=False) as obj:
                             check_standard_auxiliary(obj, definition, spec, mask, report)
                 except (OSError, ValueError, KeyError) as exc:
                     report.add(

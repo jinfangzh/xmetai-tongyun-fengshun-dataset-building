@@ -18,7 +18,7 @@ netCDF4 / cfgrib）时相关用例跳过；可用 ``pytest -m realdata`` 单独�
 pytest 产物保存在临时目录；直接调试时产物保存在 ``output/ens`` 和 ``output/single``。
 
 对表容差 ``REL_TOL``：实测最差 6.8e-6。那点差全出在单位换算——框架
-``datakit/io/readers/layouts.py:212`` 的 z500 写 ``scale=1.0/GRAVITY``（乘 float32 倒数），标准脚本
+``datakit/schema/dataset_profiles.py:212`` 的 z500 写 ``scale=1.0/GRAVITY``（乘 float32 倒数），标准脚本
 是 ``z / GRAVITY``（除），``float32(1/9.80665)`` 比 ``1/9.80665`` 单向偏低 2.4e-8，
 于是整场带一个系统性尺度偏移。布局是 weather 系列共用的，不为一万分之一去动它，
 所以容差放到 1e-4（比实测最差宽 15 倍），只拦真回归。

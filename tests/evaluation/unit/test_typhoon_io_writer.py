@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from datakit.evaluation.adapters.babj_reader import BabjCatalog, BabjReader
+from pipelines.evaluation.execution.inputs.babj import BabjSource, BabjCatalog
 from datakit.evaluation.contracts import DataRequest
 from datakit.evaluation.errors import DiscoveryError
 from datakit.evaluation.metrics.track_error import CURVE_FIELDS, ENS_EXTRA_FIELDS
@@ -70,7 +70,7 @@ def test_babj_reader_union_times_and_nan_fill(tmp_path, make_babj):
         [(t0 + timedelta(hours=12), 0, 125.0, 15.0, 970, 18)],
     )
     request = DataRequest(source_id="babj", variables=["storm"])
-    bundle = BabjReader().read(request, BabjCatalog(directory).discover(request))
+    bundle = BabjSource().read(request, BabjCatalog(directory).discover(request))
     payload = bundle.payload
     assert list(payload["storm"].values) == ["2501", "2502"]
     assert list(payload["tcname"].values) == ["杜苏芮", "MUN"]  # GBK 中文名

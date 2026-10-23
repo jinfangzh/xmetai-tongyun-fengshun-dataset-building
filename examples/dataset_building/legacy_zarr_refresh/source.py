@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from fnmatch import fnmatchcase
 import hashlib
 import json
-from pathlib import Path
 import re
+from dataclasses import dataclass
+from fnmatch import fnmatchcase
+from pathlib import Path
 from typing import Any
 
 import numpy as np
-import xarray as xr
 import zarr
+
+from datakit import io as dataset_io
 
 from .channels import canonicalize_channels
 from .config import RefreshProfile
+
 CF_TIME = re.compile(
     r"^(?P<unit>hours?|days?|seconds?)\s+since\s+(?P<origin>.+)$",
     re.IGNORECASE,
@@ -149,7 +151,7 @@ class LegacyZarrSource:
                     np.load(self.path / f"{statistic}.npy"), dtype="f4"
                 ).reshape(-1)
             if backend == "nc" and (self.path / f"{statistic}.nc").is_file():
-                dataset = xr.open_dataset(self.path / f"{statistic}.nc")
+                dataset = dataset_io.open(self.path / f"{statistic}.nc").read()
                 try:
                     variable = statistic if statistic in dataset.data_vars else next(
                         iter(dataset.data_vars)
@@ -202,14 +204,14 @@ class LegacyZarrSource:
         if kind == "npy":
             values = np.load(path)
         elif kind == "netcdf":
-            dataset = xr.open_dataset(path)
+            dataset = dataset_io.open(path).read()
             try:
                 variable = str(spec["variable"])
                 values = np.asarray(dataset[variable].values)
             finally:
                 dataset.close()
         elif kind == "const_channel":
-            dataset = xr.open_dataset(path)
+            dataset = dataset_io.open(path).read()
             try:
                 variable = str(spec["variable"])
                 channel = str(spec.get("channel", "lsm"))

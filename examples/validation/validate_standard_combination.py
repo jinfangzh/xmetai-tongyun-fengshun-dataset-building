@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from datakit.io import file_sha256
+from datakit.validation.zarr_inspection import file_sha256
 from pipelines.dataset import validate_standard_combination
 from datakit.validation import to_jsonable
 from ._standard_config import load_profile, read_json

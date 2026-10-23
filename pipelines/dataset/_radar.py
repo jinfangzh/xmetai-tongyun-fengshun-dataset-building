@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from datakit.io import write_zarr
+from datakit import io as dataset_io
 from datakit.radar import (
     CinradRecord,
     RadarBBox,
@@ -143,13 +143,7 @@ def convert_cinrad_to_zarr(
         expected_frequency=str(continuity.expected_frequency),
         missing_time_steps=continuity.missing_count,
     )
-    written = write_zarr(
-        combined,
-        output,
-        mode="w",
-        consolidated=True,
-        chunks=chunks,
-    )
+    written = dataset_io.open(output).write(combined, mode="w", consolidated=True, chunks=chunks)[0]
     return written, continuity
 
 
@@ -167,10 +161,4 @@ def convert_meteonet_npz_to_zarr(
     if output.exists() and not overwrite:
         raise FileExistsError(output)
     dataset = read_meteonet_npz(paths, **read_options)
-    return write_zarr(
-        dataset,
-        output,
-        mode="w",
-        consolidated=True,
-        chunks=chunks,
-    )
+    return dataset_io.open(output).write(dataset, mode="w", consolidated=True, chunks=chunks)[0]

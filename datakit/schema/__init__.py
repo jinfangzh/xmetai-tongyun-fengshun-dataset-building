@@ -1,5 +1,6 @@
 """Canonical weather-data dimensions and variable metadata."""
 
+from .mapping import DatasetMapping, VarSpec, load_mapping
 from .channel_attributes import (
     CHANNEL_INFO_SCHEMA_VERSION,
     DEFAULT_RADIATION_SECONDS,
@@ -74,6 +75,9 @@ from .standard_dataset import (
 from .dataset_products import STANDARD_PRODUCTS, get_dataset_product
 
 __all__ = [
+    "DatasetMapping",
+    "load_mapping",
+    "VarSpec",
     "AuxiliaryDefinition",
     "ChannelDefinition",
     "DatasetProduct",

@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
+from datakit import io as dataset_io
 
 INPUT_ROOT = Path( "/home/zjf/xmetai-datakit/examples/dataset_downloader/"
     "copernicusmarine_download/copernicusmarine_data/oras5_daily"); 
@@ -132,7 +133,7 @@ def process_day(day):
 
     print(f"[PROCESS] {day}")
 
-    with xr.open_dataset(input_file, engine="netcdf4") as ds:
+    with dataset_io.open(input_file).read(engine="netcdf4") as ds:
         channels = []
         for target, source in VARIABLES_2D.items():
             print(f"  2D: {target} <- {source}")

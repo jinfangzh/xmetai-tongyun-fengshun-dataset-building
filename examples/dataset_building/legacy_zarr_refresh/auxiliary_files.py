@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import xarray as xr
 import zarr
+
+from datakit import io as dataset_io
+
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -84,7 +87,7 @@ def const_data_variable(dataset: xr.Dataset) -> str:
 def build_const(source_file: Path, target_store: Path) -> tuple[xr.Dataset, dict[str, Any]]:
     target_lat = read_zarr_coordinate(target_store, "lat").astype("f8")
     target_lon = read_zarr_coordinate(target_store, "lon").astype("f8")
-    source = xr.open_dataset(source_file, decode_cf=False)
+    source = dataset_io.open(source_file).read(decode_cf=False)
     try:
         variable_name = const_data_variable(source)
         field = source[variable_name].transpose("channel", "lat", "lon")
@@ -128,7 +131,7 @@ def build_const(source_file: Path, target_store: Path) -> tuple[xr.Dataset, dict
 
 def build_weight(source_file: Path, target_store: Path) -> tuple[np.ndarray, dict[str, Any]]:
     target_lat = read_zarr_coordinate(target_store, "lat").astype("f8")
-    source = xr.open_dataset(source_file, decode_cf=False)
+    source = dataset_io.open(source_file).read(decode_cf=False)
     try:
         candidates = [v for v in source.data_vars.values() if v.dims == ("lat",)]
         if len(candidates) != 1:
@@ -176,7 +179,7 @@ def build_weight_npy(
 def source_spatial_coordinates(source_root: Path) -> tuple[np.ndarray, np.ndarray]:
     const_file = source_root / "const.nc"
     if const_file.is_file():
-        dataset = xr.open_dataset(const_file, decode_cf=False)
+        dataset = dataset_io.open(const_file).read(decode_cf=False)
         try:
             if "lat" in dataset.coords and "lon" in dataset.coords:
                 return (
@@ -222,7 +225,7 @@ def build_mask_netcdf(
 
     target_lat = read_zarr_coordinate(target_store, "lat")
     target_lon = read_zarr_coordinate(target_store, "lon")
-    dataset = xr.open_dataset(source_file, decode_cf=False)
+    dataset = dataset_io.open(source_file).read(decode_cf=False)
     try:
         candidates = [
             variable
@@ -261,7 +264,7 @@ def build_land_mask_from_const(
 ) -> tuple[np.ndarray, dict[str, Any]]:
     target_lat = read_zarr_coordinate(target_store, "lat")
     target_lon = read_zarr_coordinate(target_store, "lon")
-    source = xr.open_dataset(source_file, decode_cf=False)
+    source = dataset_io.open(source_file).read(decode_cf=False)
     try:
         variable_name = const_data_variable(source)
         field = source[variable_name].transpose("channel", "lat", "lon")

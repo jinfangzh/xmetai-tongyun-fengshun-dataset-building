@@ -126,11 +126,11 @@ def _assert_case_outputs(output_dir, case, meta, tcid, init_iso, *, ensemble=Fal
 def test_real_babj_seed_regression():
     """真实报文上的种子回归：2507@0722 非网格记录、2503@0703 首配。"""
     babj_dir = require_path(BABJ_DIR, "XMETAI_BABJ_DIR")
-    from datakit.evaluation.adapters.babj_reader import BabjCatalog, BabjReader
     from datakit.evaluation.contracts import DataRequest
+    from pipelines.evaluation.execution.inputs.babj import BabjCatalog, BabjSource
     from pipelines.evaluation.protocols import babj_seed_moment
 
-    reader = BabjReader(source_id="babj")
+    reader = BabjSource(source_id="babj")
     request = DataRequest(source_id="babj", variables=["storm"])
     payload = reader.read(request, BabjCatalog(babj_dir).discover(request)).payload
     names = [str(value) for value in payload["storm"].values]
@@ -278,7 +278,7 @@ def test_real_ens_parity_20250610(tmp_path):
     )
 
     # B 类：成员位置先平均、再与实况求误差
-    from datakit.evaluation.typhoon import along_cross_track, great_circle_km
+    from datakit.evaluation.metrics.track_error import along_cross_track, great_circle_km
 
     obs_lat_arr = obs_lat.to_numpy(dtype=float)
     obs_lon_arr = obs_lon.to_numpy(dtype=float)
@@ -301,7 +301,7 @@ def test_real_ens_parity_20250610(tmp_path):
     )
 
     # 首时次 anchor = 起报时刻实况（用真报文独立取，08:00 北京时）
-    from datakit.evaluation.typhoon import read_babj_analyses
+    from pipelines.evaluation.execution.inputs.babj import read_babj_analyses
 
     _, _, analyses = read_babj_analyses(babj_dir / "babj2501.dat")
     anchor = analyses[datetime(2025, 6, 10, 8, 0)]

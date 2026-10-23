@@ -5,9 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-import xarray as xr
-
-from datakit.io import read_netcdf, read_zarr
+from datakit import io as dataset_io
 from datakit.validation import (
     build_statistics_diff,
     collect_structure,
@@ -53,8 +51,8 @@ def validate_zarr_netcdf_consistency(
         "status": "running",
     }
 
-    zarr_opened = read_zarr(zarr_path)
-    nc_opened = read_netcdf(nc_path)
+    zarr_opened = dataset_io.open(zarr_path).read()
+    nc_opened = dataset_io.open(nc_path).read(load=True)
 
     try:
         zarr_data = normalize_core_dims(select_data_array(zarr_opened, variable, source_name="zarr"))

@@ -12,7 +12,7 @@
 | 层与通道转换、归一化和单位缩放 | `datakit.transforms` | `process_xarray.py` |
 | 累计量转增量、重采样和预报步聚合 | `datakit.transforms` | `process_xarray.py` |
 | 空间裁剪和插值 | `datakit.transforms` | `process_xarray.py` |
-| mean/std、差分、时次气候态和分位数 | `datakit.statistics` | `statistics_summary.py` |
+| mean/std、差分、时次气候态和分位数 | `pipelines.dataset` | `statistics_summary.py` |
 | NaN/Inf、范围、完整年份和 schema 检查 | `datakit.validation` | `statistics_summary.py` |
 | NetCDF、GRIB、NumPy 和 Zarr 本地读写 | `datakit.io` | `io_local.py`、`convert_to_zarr.py` |
 | 按年保存、统计产物和 Zarr 导出 | `pipelines.dataset` | `zarr_products.py` |

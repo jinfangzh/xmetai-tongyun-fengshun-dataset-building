@@ -1,0 +1,9 @@
+name: fuxi
+implementation: forecast_files
+layout:
+  directory: "{init_time:%Y%m%d}"
+  filename: "{lead_index:03d}.nc"
+lead_time:
+  hours_per_index: 6
+example: "20250101/001.nc"
+notes: "日期目录约定零点起报；编号乘6得到小时数，不按现存文件顺序计数。"

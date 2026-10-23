@@ -276,7 +276,7 @@ class Matcher:
                     )
                     sample_records.append(
                         {
-                            "init_time": str(init_time),
+                            "init_time": np.datetime_as_string(init_time, unit="us"),
                             "lead_h": float(lead_time),
                         }
                     )
@@ -480,7 +480,11 @@ class Matcher:
         sample_keys = [
             {
                 **(sample_record or {}),
-                "valid_time": str(valid_time) if valid_time is not None else "unknown",
+                "valid_time": (
+                    np.datetime_as_string(valid_time, unit="us")
+                    if valid_time is not None
+                    else "unknown"
+                ),
             }
         ]
 

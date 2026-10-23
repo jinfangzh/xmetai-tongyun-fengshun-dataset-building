@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import signal
 
-from datakit.io import file_sha256
+from datakit.validation.zarr_inspection import file_sha256
 from pipelines.dataset import validate_standard_conversion
 from datakit.schema import ConversionChannelRule, ConversionValidationSpec, EvidenceReference
 from datakit.validation import to_jsonable

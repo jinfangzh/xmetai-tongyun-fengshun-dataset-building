@@ -1,0 +1,12 @@
+name: diamond_station_flat
+implementation: diamond_station
+layout:
+  filename: "{time:%Y%m%d%H}.000"
+time_zone: "Asia/Shanghai"
+example: "2025010106.000"
+mapping:
+  variables:
+    tp:
+      source: precipitation
+      unit: mm
+      temporal_kind: interval_accumulation

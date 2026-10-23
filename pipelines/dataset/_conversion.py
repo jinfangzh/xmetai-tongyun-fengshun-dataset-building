@@ -2,26 +2,18 @@
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from pathlib import Path
-import shutil
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import xarray as xr
 
-from datakit.io import (
-    read_grib,
-    read_netcdf,
-    read_numpy,
-    read_zarr_array,
-    read_zarr,
-    write_netcdf,
-    write_zarr,
-)
-from datakit.io._common import infer_format, normalize_format
+from datakit import io as dataset_io
+from datakit.io.backends.files import infer_format, normalize_format
 from datakit.schema import channel_attributes
 from datakit.transforms import (
     denormalize_xarray,
@@ -40,16 +32,17 @@ def _open_source(
 ) -> xr.Dataset | xr.DataArray:
     """Open one explicitly supported local source for dataset conversion."""
 
-    format_name = normalize_format(source_format) if source_format else infer_format(path)
-    if format_name == "grib":
-        return read_grib(path, variable=variable, **options)
-    if format_name == "netcdf":
-        return read_netcdf(path, variable=variable, **options)
+    format_name = (
+        normalize_format(source_format) if source_format else infer_format(path)
+    )
+    options = dict(options)
     if format_name == "numpy":
-        return read_numpy(path, key=variable, **options)
-    if format_name == "zarr":
-        return read_zarr(path, variable=variable, **options)
-    raise ValueError(f"Unsupported source format: {format_name!r}")
+        options["key"] = variable
+    else:
+        options["variable"] = variable
+    return dataset_io.open(path).read(
+        format=format_name, load=format_name != "zarr", **options
+    )
 
 
 def _reject_reserved_options(
@@ -78,7 +71,11 @@ def _validate_sidecar_layout(
     if not has_mean:
         return
 
-    dataset = data if isinstance(data, xr.Dataset) else data.to_dataset(name=data.name or "data")
+    dataset = (
+        data
+        if isinstance(data, xr.Dataset)
+        else data.to_dataset(name=data.name or "data")
+    )
     if "channel" not in dataset.dims:
         return
 
@@ -94,7 +91,9 @@ def _validate_sidecar_layout(
 def _as_data_array(name: str, value: Any) -> xr.DataArray:
     if isinstance(value, xr.Dataset):
         if len(value.data_vars) != 1:
-            raise ValueError(f"Sidecar {name!r} dataset must contain exactly one variable")
+            raise ValueError(
+                f"Sidecar {name!r} dataset must contain exactly one variable"
+            )
         value = value[next(iter(value.data_vars))]
     if isinstance(value, xr.DataArray):
         return value.rename(name)
@@ -109,7 +108,11 @@ def _merge_sidecars_into_dataset(
     data: xr.Dataset | xr.DataArray,
     sidecars: Mapping[str, Any],
 ) -> xr.Dataset:
-    dataset = data if isinstance(data, xr.Dataset) else data.to_dataset(name=data.name or "data")
+    dataset = (
+        data
+        if isinstance(data, xr.Dataset)
+        else data.to_dataset(name=data.name or "data")
+    )
     if not sidecars:
         return dataset
     result = dataset.copy()
@@ -124,7 +127,11 @@ def _apply_channel_attributes(
     *,
     accumulation_hours: float | None = None,
 ) -> xr.Dataset:
-    if "channel" not in dataset.coords or "mean" not in sidecars or "std" not in sidecars:
+    if (
+        "channel" not in dataset.coords
+        or "mean" not in sidecars
+        or "std" not in sidecars
+    ):
         return dataset
 
     result = dataset.copy()
@@ -137,7 +144,11 @@ def _apply_channel_attributes(
     )
     result["channel"].attrs.update(attrs)
     return result
-def _validate_normalized_dataset_layout(dataset: xr.Dataset, *, variable: str = "data") -> None:
+
+
+def _validate_normalized_dataset_layout(
+    dataset: xr.Dataset, *, variable: str = "data"
+) -> None:
     if variable in dataset.data_vars and "channel" in dataset[variable].dims:
         expected = int(dataset.sizes["channel"])
         has_mean = "mean" in dataset.data_vars
@@ -149,8 +160,13 @@ def _validate_normalized_dataset_layout(dataset: xr.Dataset, *, variable: str = 
             std = dataset["std"]
             if "channel" not in mean.dims or "channel" not in std.dims:
                 raise ValueError("'mean' and 'std' must use 'channel' dimension")
-            if int(mean.sizes["channel"]) != expected or int(std.sizes["channel"]) != expected:
-                raise ValueError("'mean'/'std' channel length must match data channel length")
+            if (
+                int(mean.sizes["channel"]) != expected
+                or int(std.sizes["channel"]) != expected
+            ):
+                raise ValueError(
+                    "'mean'/'std' channel length must match data channel length"
+                )
 
     if "mask" in dataset.data_vars:
         mask = dataset["mask"]
@@ -213,7 +229,7 @@ def convert_to_zarr(
     )
     _reject_reserved_options(
         writer_kwargs,
-        {"chunks", "consolidated", "mode","zarr_format"},
+        {"chunks", "consolidated", "mode", "zarr_format"},
         name="write_options",
     )
 
@@ -246,14 +262,13 @@ def convert_to_zarr(
                 accumulation_hours=channel_accumulation_hours,
             )
         _validate_normalized_dataset_layout(to_write, variable="data")
-        written = write_zarr(
+        written = dataset_io.open(destination).write(
             to_write,
-            destination,
             mode=mode,
             consolidated=consolidated,
             chunks=chunks,
             **writer_kwargs,
-        )
+        )[0]
         return written
     finally:
         if should_close:
@@ -278,11 +293,23 @@ def _load_channel_statistic(
     root = Path(directory).expanduser()
     netcdf_path = root / f"{name}.nc"
     numpy_path = root / f"{name}.npy"
-    zarr_values = read_zarr_array(root, name, flatten=True)
+    zarr_values = None
+    candidate = root / name
+    if candidate.exists() and any(
+        (root / marker).is_file() for marker in (".zgroup", "zarr.json")
+    ):
+        import zarr
+
+        node = zarr.open(str(candidate), mode="r")
+        if isinstance(node, zarr.Group):
+            keys = list(node.array_keys())
+            node = node[keys[0]] if keys else None
+        if node is not None:
+            zarr_values = np.asarray(node[...]).reshape(-1)
     if zarr_values is not None:
         value = xr.DataArray(zarr_values, dims=("channel",))
     elif netcdf_path.is_file():
-        opened = read_netcdf(netcdf_path)
+        opened = dataset_io.open(netcdf_path).read(load=True)
         try:
             if isinstance(opened, xr.Dataset):
                 if len(opened.data_vars) != 1:
@@ -362,7 +389,7 @@ def _in_day_range(path: Path, start_day: date | None, end_day: date | None) -> b
 
 
 def _load_channel_stat_array(path: str | Path, variable: str) -> xr.DataArray:
-    opened = read_netcdf(path)
+    opened = dataset_io.open(path).read(load=True)
     try:
         if isinstance(opened, xr.DataArray):
             value = opened
@@ -379,7 +406,7 @@ def _load_channel_stat_array(path: str | Path, variable: str) -> xr.DataArray:
 
 
 def _load_any_array(path: str | Path, variable: str) -> xr.DataArray:
-    opened = read_netcdf(path)
+    opened = dataset_io.open(path).read(load=True)
     try:
         if isinstance(opened, xr.DataArray):
             value = opened
@@ -433,7 +460,9 @@ def convert_daily_netcdf_to_normalized_zarr(
         raise ValueError("start_date cannot be greater than end_date")
 
     selected_levels = [item.strip() for item in (levels or []) if item and item.strip()]
-    nc_files = sorted(path for path in source.glob("*.nc") if _in_day_range(path, start_day, end_day))
+    nc_files = sorted(
+        path for path in source.glob("*.nc") if _in_day_range(path, start_day, end_day)
+    )
     if not nc_files:
         raise FileNotFoundError(f"No NetCDF files found in {source}")
 
@@ -453,9 +482,13 @@ def convert_daily_netcdf_to_normalized_zarr(
 
     datasets: list[xr.Dataset] = []
     for path in nc_files:
-        opened = read_netcdf(path)
+        opened = dataset_io.open(path).read(load=True)
         try:
-            dataset = opened if isinstance(opened, xr.Dataset) else opened.to_dataset(name=opened.name or variable)
+            dataset = (
+                opened
+                if isinstance(opened, xr.Dataset)
+                else opened.to_dataset(name=opened.name or variable)
+            )
             if variable not in dataset:
                 raise KeyError(f"{path} does not contain variable {variable!r}")
 
@@ -467,8 +500,12 @@ def convert_daily_netcdf_to_normalized_zarr(
             ).astype("float32")
 
             if selected_levels:
-                available_channels = [str(name) for name in data.channel.values.tolist()]
-                missing = [name for name in selected_levels if name not in available_channels]
+                available_channels = [
+                    str(name) for name in data.channel.values.tolist()
+                ]
+                missing = [
+                    name for name in selected_levels if name not in available_channels
+                ]
                 if missing:
                     raise KeyError(f"{path} missing requested levels: {missing}")
                 data = data.sel(channel=selected_levels)
@@ -486,9 +523,13 @@ def convert_daily_netcdf_to_normalized_zarr(
 
             day_dataset = data.to_dataset(name=variable)
             if "time" in day_dataset.coords and "time" not in day_dataset.dims:
-                day_dataset = day_dataset.expand_dims(time=[pd.Timestamp(day_dataset.time.values)])
+                day_dataset = day_dataset.expand_dims(
+                    time=[pd.Timestamp(day_dataset.time.values)]
+                )
             elif "time" not in day_dataset.dims:
-                day_dataset = day_dataset.expand_dims(time=[pd.Timestamp(_parse_day_from_name(path))])
+                day_dataset = day_dataset.expand_dims(
+                    time=[pd.Timestamp(_parse_day_from_name(path))]
+                )
 
             datasets.append(day_dataset.load())
         finally:
@@ -573,7 +614,7 @@ def extract_zarr_to_netcdf(
 
     if time_interval < 1:
         raise ValueError("time_interval must be positive")
-    opened = read_zarr(zarr_path)
+    opened = dataset_io.open(zarr_path).read()
     dataset = opened
     try:
         if not isinstance(dataset, xr.Dataset):
@@ -603,7 +644,13 @@ def extract_zarr_to_netcdf(
 
         if channels is not None and levels is not None:
             raise ValueError("Use only one of 'channels' or 'levels'")
-        selected = list(channels) if channels is not None else list(levels) if levels is not None else []
+        selected = (
+            list(channels)
+            if channels is not None
+            else list(levels)
+            if levels is not None
+            else []
+        )
         if selected:
             missing = [name for name in selected if name not in all_channels]
             if missing:
@@ -641,11 +688,8 @@ def extract_zarr_to_netcdf(
             if engine in {"netcdf4", "h5netcdf"}
             else None
         )
-        return write_netcdf(
-            output,
-            destination,
-            engine=engine,
-            encoding=encoding,
-        )
+        return dataset_io.open(destination).write(
+            output, mode="w", engine=engine, encoding=encoding
+        )[0]
     finally:
         opened.close()

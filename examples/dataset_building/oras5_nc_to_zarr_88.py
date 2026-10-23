@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 from datetime import date, timedelta
 from pathlib import Path
-import shutil
 
 import pandas as pd
 import xarray as xr
 
-from datakit.io import read_netcdf, read_zarr
-from pipelines.dataset import convert_to_zarr
+from datakit import io as dataset_io
 from datakit.transforms import normalize_xarray
-
+from pipelines.dataset import convert_to_zarr
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -133,7 +132,7 @@ def _infer_available_channels(input_root: Path, mean: xr.DataArray, std: xr.Data
     if not files:
         return VARIABLES_LIST
 
-    opened = read_netcdf(files[0])
+    opened = dataset_io.open(files[0]).read(load=True)
     try:
         ds = _as_dataset(opened)
         if "data" not in ds or "channel" not in ds["data"].dims:
@@ -156,7 +155,7 @@ def _as_dataset(obj: xr.Dataset | xr.DataArray, variable: str = "data") -> xr.Da
 
 
 def _load_stat_array(path: Path, variable: str) -> xr.DataArray:
-    opened = read_netcdf(path)
+    opened = dataset_io.open(path).read(load=True)
     try:
         value = opened if isinstance(opened, xr.DataArray) else opened[variable]
         if "channel" not in value.dims:
@@ -168,7 +167,7 @@ def _load_stat_array(path: Path, variable: str) -> xr.DataArray:
 
 
 def _load_any_array(path: Path, variable: str) -> xr.DataArray:
-    opened = read_netcdf(path)
+    opened = dataset_io.open(path).read(load=True)
     try:
         return (opened if isinstance(opened, xr.DataArray) else opened[variable]).load()
     finally:
@@ -179,7 +178,7 @@ def _load_any_array(path: Path, variable: str) -> xr.DataArray:
 def _read_day_dataset(input_root: Path, day: str, channels: list[str], strict: bool) -> xr.Dataset | None:
     flat_file = _find_flat_daily_file(input_root, day)
     if flat_file is not None:
-        opened = read_netcdf(flat_file)
+        opened = dataset_io.open(flat_file).read(load=True)
         try:
             ds = _as_dataset(opened)
             if "data" not in ds:
@@ -216,7 +215,7 @@ def _read_day_dataset(input_root: Path, day: str, channels: list[str], strict: b
                     if strict:
                         raise FileNotFoundError(f"Missing source file: {nc_path}")
                     return None
-                opened_by_folder[folder] = _as_dataset(read_netcdf(nc_path))
+                opened_by_folder[folder] = _as_dataset(dataset_io.open(nc_path).read(load=True))
 
             ds = opened_by_folder[folder]
             if "data" not in ds:
@@ -336,7 +335,7 @@ def main() -> None:
     print("写入完成:")
     print(output_path)
 
-    opened = read_zarr(output_path)
+    opened = dataset_io.open(output_path).read()
     try:
         print(opened)
     finally:

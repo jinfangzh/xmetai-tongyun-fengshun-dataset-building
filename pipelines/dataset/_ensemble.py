@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
+import shutil
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-import shutil
 from typing import Any
 
 import numpy as np
 import xarray as xr
 
-from datakit.io import read_netcdf, read_zarr, write_zarr
+from datakit import io as dataset_io
 
 
 def scan_ensemble_netcdf_groups(
@@ -46,7 +46,7 @@ def validate_ensemble_zarr(
     """Return whether an ensemble Zarr store is readable and non-empty."""
 
     try:
-        dataset = read_zarr(path, consolidated=True)
+        dataset = dataset_io.open(path).read(consolidated=True)
         try:
             if not isinstance(dataset, xr.Dataset):
                 return False
@@ -86,13 +86,7 @@ def _atomic_write_zarr(
     if temporary.exists():
         shutil.rmtree(temporary)
     try:
-        write_zarr(
-            dataset,
-            temporary,
-            mode="w",
-            consolidated=True,
-            chunks=chunks,
-        )
+        dataset_io.open(temporary).write(dataset, mode="w", consolidated=True, chunks=chunks)[0]
         if destination.exists():
             if not overwrite:
                 raise FileExistsError(destination)
@@ -151,7 +145,7 @@ def convert_ensemble_netcdf_to_zarr(
         lead_datasets = []
         lead_labels = []
         for lead_time, members in sorted(by_lead.items(), key=lambda item: item[0]):
-            opened = [read_netcdf(path) for path in sorted(members)]
+            opened = [dataset_io.open(path).read(load=True) for path in sorted(members)]
             try:
                 datasets = [
                     value if isinstance(value, xr.Dataset) else value.to_dataset()

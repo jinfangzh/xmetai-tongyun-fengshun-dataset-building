@@ -11,7 +11,6 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from datakit.io import read_zarr_array
 from datakit.transforms import denormalize_xarray
 
 
@@ -71,9 +70,18 @@ def load_channel_statistic_from_zarr(
     Statistics are resolved from top-level arrays (``mean``/``std``).
     """
 
-    values = read_zarr_array(path, name, flatten=True)
-    if values is None:
+    import zarr
+
+    candidate = Path(path).expanduser() / name
+    if not candidate.exists():
         raise FileNotFoundError(f"Cannot find zarr statistic {name!r} in {path}")
+    node = zarr.open(str(candidate), mode="r")
+    if isinstance(node, zarr.Group):
+        keys = list(node.array_keys())
+        if not keys:
+            raise FileNotFoundError(f"Cannot find zarr statistic {name!r} in {path}")
+        node = node[keys[0]]
+    values = np.asarray(node[...]).reshape(-1)
     if len(values) != len(channels):
         raise ValueError(
             f"{name} length {len(values)} does not match channel count {len(channels)}"
@@ -195,7 +203,9 @@ def validate_same_layout(left: xr.DataArray, right: xr.DataArray) -> None:
     """Ensure arrays have identical shape and dimension order before elementwise compare."""
 
     if left.dims != right.dims:
-        raise ValueError(f"Dimension order mismatch: left={left.dims}, right={right.dims}")
+        raise ValueError(
+            f"Dimension order mismatch: left={left.dims}, right={right.dims}"
+        )
     if left.shape != right.shape:
         raise ValueError(f"Shape mismatch: left={left.shape}, right={right.shape}")
 
@@ -249,7 +259,9 @@ def summarize_statistics(array: xr.DataArray) -> dict[str, float]:
     std = float(finite_values.std(skipna=True).compute().item())
 
     nan_count = int(array.isnull().sum().compute().item())
-    inf_count = int(xr.apply_ufunc(np.isinf, array, dask="allowed").sum().compute().item())
+    inf_count = int(
+        xr.apply_ufunc(np.isinf, array, dask="allowed").sum().compute().item()
+    )
 
     return {
         "min": minimum,
@@ -282,4 +294,6 @@ def save_report_json(path: str | Path, payload: dict[str, object]) -> None:
 
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    target.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )

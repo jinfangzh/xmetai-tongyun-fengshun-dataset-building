@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -29,12 +30,12 @@ from datakit.evaluation.contracts import (
     DataBundle,
     DataIndex,
     DataRequest,
-    Provenance,
-    SemanticMetadata,
 )
 from datakit.evaluation.errors import DecodeError, DiscoveryError
+from datakit.schema.dataset_profiles import ERA5_ZARR_LAYOUT, DatasetProfile
+from datakit.schema.mapping import DatasetMapping, apply_dataset_mapping
 from datakit.schema.semantics import TemporalKind
-from datakit.io.readers.layouts import ERA5_ZARR_LAYOUT, GriddedLayout
+from pipelines.evaluation.execution.sources import build_bundle
 
 log = logging.getLogger(__name__)
 
@@ -173,29 +174,24 @@ class _Store:
                 raise DecodeError(f"读不了通道名清单 {sidecar}: {exc}") from exc
             names = list(raw)
         else:
-            names = self._channel_from_store()
+            try:
+                values = np.asarray(self.member("channel")[:])
+            except DecodeError as exc:
+                raise DecodeError(
+                    f"{self.path} 既没有 {CHANNEL_NAMES_FILE}，也没有 channel 成员，"
+                    f"无法确定通道名"
+                ) from exc
+            names = [
+                item.decode("utf-8", errors="replace")
+                if isinstance(item, bytes)
+                else str(item)
+                for item in values
+            ]
         self._names = [str(name).strip().lower() for name in names]
         self._alias = {
             name.replace("_", ""): name for name in self._names if "_" in name
         }
         return self._names
-
-    def _channel_from_store(self) -> List[str]:
-        """没有旁挂清单时，用 store 里的 channel 数组顶替。"""
-        try:
-            values = np.asarray(self.member("channel")[:])
-        except DecodeError as exc:
-            raise DecodeError(
-                f"{self.path} 既没有 {CHANNEL_NAMES_FILE}，也没有 channel 成员，"
-                f"无法确定通道名"
-            ) from exc
-        return [self._decode_name(item) for item in values]
-
-    @staticmethod
-    def _decode_name(item: Any) -> str:
-        if isinstance(item, bytes):
-            return item.decode("utf-8", errors="replace")
-        return str(item)
 
     def resolve_channel(self, wanted: str) -> Optional[str]:
         """标准/通道名 -> store 里实际的通道名。
@@ -291,7 +287,7 @@ class Era5ZarrCatalog:
         return DataIndex(source_id=request.source_id, available=[dict(self.stores)])
 
 
-class Era5ZarrReader:
+class Era5ZarrSource:
     """把 ERA5 zarr store 读成 ``(valid_time, lat, lon)`` 的标准 Dataset。
 
     一个 run 可以用两个 store（气压层 + 地面），变量按 ``layout.groups`` 路由。
@@ -301,7 +297,7 @@ class Era5ZarrReader:
         self,
         source_id: str,
         stores: Dict[str, str],
-        layout: GriddedLayout = ERA5_ZARR_LAYOUT,
+        layout: DatasetProfile = ERA5_ZARR_LAYOUT,
         version: str = "1.0.0",
     ):
         self.source_id = source_id
@@ -321,21 +317,16 @@ class Era5ZarrReader:
             self._opened[key] = _Store(key, self.stores[key])
         return self._opened[key]
 
-    def _route(self, name: str) -> List[str]:
-        """一个变量该去哪些 store 找：布局声明优先，找不到再挨个试。"""
-        declared = self.layout.groups.get(name)
-        if declared:
-            return [declared]
-        return list(self.stores)
-
     def _locate(self, name: str) -> Optional[Tuple[_Store, str]]:
         """标准名 -> (store, 通道名)。"""
         spec = self.layout.spec_for(name)
         wanted = spec.source if spec is not None and spec.source else name
-        for key in self._route(name):
-            channel = self._store(key).resolve_channel(wanted)
+        declared = self.layout.groups.get(name)
+        for key in [declared] if declared else self.stores:
+            store = self._store(key)
+            channel = store.resolve_channel(wanted)
             if channel is not None:
-                return self._store(key), channel
+                return store, channel
         return None
 
     def _time_indices(
@@ -368,7 +359,7 @@ class Era5ZarrReader:
             )
         return indices, missing
 
-    # -- Reader 接口 --------------------------------------------------------
+    # -- 评估适配接口 --------------------------------------------------------
 
     def read(self, request: DataRequest, index: DataIndex) -> DataBundle:
         if not request.init_times:
@@ -397,7 +388,6 @@ class Era5ZarrReader:
             )
 
         fields: Dict[str, xr.DataArray] = {}
-        units: Dict[str, str] = {}
         semantics: Dict[str, TemporalKind] = {}
         source_variables: Dict[str, str] = {}
         files: List[str] = []
@@ -423,43 +413,46 @@ class Era5ZarrReader:
 
             for name, _store_obj, channel in items:
                 block = store.block(channel, lo, hi, len(lat), len(lon), time_size)
-                values = np.where(np.abs(block) > MISSING_SENTINEL, np.nan, block)
-                values = values[picked, :, :].astype("f4")
+                values = block[picked, :, :]
 
                 spec = self.layout.spec_for(name)
                 unit = spec.unit if spec is not None else "unknown"
-                if spec is not None and (spec.scale != 1.0 or spec.offset != 0.0):
-                    values = values * spec.scale + spec.offset
 
                 fields[name] = xr.DataArray(
                     values,
                     dims=("valid_time", "lat", "lon"),
                     coords={"valid_time": times, "lat": lat, "lon": lon},
                     name=name,
-                    attrs={"units": unit},
+                    attrs={
+                        "units": (spec.source_unit or unit)
+                        if spec is not None
+                        else unit
+                    },
                 )
-                units[name] = unit
                 source_variables[name] = channel
                 if spec is not None:
                     semantics[name] = spec.temporal_kind
 
         payload = xr.Dataset(fields)
-        return DataBundle(
-            payload=payload,
-            kind=self.layout.kind,
-            source_id=self.source_id,
+        payload = payload.where(abs(payload) <= MISSING_SENTINEL).astype("f4")
+        mapping = DatasetMapping(
+            variables={
+                name: replace(spec, source=name, source_unit="")
+                for name, spec in self.layout.variables.items()
+            }
+        )
+        payload = apply_dataset_mapping(payload, mapping, list(fields))
+        return build_bundle(
+            request,
+            payload,
+            files,
+            "era5_zarr",
+            self.version,
+            source_variables=source_variables,
             standard_vars=source_variables,
-            semantic=SemanticMetadata(
-                units=units,
-                temporal_kind=semantics or TemporalKind.INSTANTANEOUS,
-                grid_type="regular_latlon",
-            ),
-            provenance=Provenance(
-                input_files=files,
-                reader_id="era5_zarr",
-                reader_version=self.version,
-                source_variables=source_variables,
-            ),
+            kind=self.layout.kind,
+            mapping=mapping,
+            temporal_kind=semantics or TemporalKind.INSTANTANEOUS,
         )
 
 

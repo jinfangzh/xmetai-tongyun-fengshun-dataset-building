@@ -11,10 +11,11 @@ from typing import Any, Callable
 
 import numpy as np
 
-from datakit.io._zarr_inspection import expected_zarr_blocks, read_zarr_block, zarr_chunk_path
 from datakit.schema.standard_dataset import DatasetValidationSpec
 from datakit.validation._standard_quality import StandardQualityAccumulator
 from datakit.validation.reports import ValidationReport
+from datakit.validation.zarr_inspection import expected_zarr_blocks, zarr_chunk_path
+
 from ._validation_runtime import _fingerprint, _resident_memory_bytes
 
 INTEGRITY = "data_integrity"
@@ -79,7 +80,7 @@ def scan_standard_blocks(
                 "storage": storage_status,
             }
             try:
-                block = read_zarr_block(array, selection)
+                block = np.asarray(array[selection])
                 if block.shape != tuple(
                     s.stop - s.start for s in selection
                 ) or block.dtype != np.dtype("f2"):

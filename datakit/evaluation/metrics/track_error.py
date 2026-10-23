@@ -1,5 +1,13 @@
 # -*- coding: utf-8 -*-
-"""台风路径/强度误差指标。
+"""台风路径诊断与路径/强度误差指标。
+
+算法对齐参考实现（track_diag_* / track_errs_* 两脚本），差异有三处
+（均经确认）：
+  1. 强度取最大风的 ±5° 框以**当前诊断中心**为中心（参考脚本用前一时次
+     位置）；
+  2. 首时次也输出真实诊断量（中心/强度/气压，参考脚本存 0 占位）；
+  3. 方框搜索用**修正后的坐标数组**定位（处理 lon 文件头错误与 0/360
+     回绕；参考脚本按标准 0.25° 索引算术，行为一致但更脆）。
 
 输入是 ``typhoon_track`` 协议配对好的两条路径（同为 ``(lead_time, storm)``）：
 
@@ -22,20 +30,129 @@
 × 全年场次会把长表撑成几十万行，而曲线本来就有专门的出口。
 """
 
+import math
 from typing import Any, Dict, List
 
 import numpy as np
 import xarray as xr
 
 from datakit.evaluation.contracts import EvaluationBatch, MetricResult, ResultStatus
-from datakit.evaluation.errors import MetricError
+from datakit.evaluation.errors import MetricError, TyphoonDataError
 from datakit.evaluation.metrics.base import (
     Metric,
     MetricRequirements,
     MetricState,
     ProductType,
 )
-from datakit.evaluation.typhoon import along_cross_track, great_circle_km
+
+R_EARTH_KM = 6371.0
+
+
+def great_circle_km(lat1, lon1, lat2, lon2):
+    """球面大圆距离（km，r=6371）。向量化；近距用 haversine 保精度。"""
+    lat1, lon1, lat2, lon2 = (
+        np.deg2rad(np.asarray(x, dtype="f8")) for x in (lat1, lon1, lat2, lon2)
+    )
+    dlat, dlon = lat2 - lat1, lon2 - lon1
+    a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
+    return 2 * R_EARTH_KM * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+
+
+def _box_mask(glat, glon, clat, clon, half_lat, half_lon):
+    """以 (clat, clon) 为中心的经纬方框掩膜（经度回绕）。"""
+    glat = np.asarray(glat, dtype="f8")
+    glon = np.mod(np.asarray(glon, dtype="f8"), 360.0)
+    m_lat = np.abs(glat - clat) <= half_lat
+    dlon = np.mod(glon - (clon % 360.0) + 180.0, 360.0) - 180.0
+    m_lon = np.abs(dlon) <= half_lon
+    return m_lat[:, None] & m_lon[None, :]
+
+
+# ---------------------------------------------------------------- 诊断
+
+def find_center_by_slp(msl, glat, glon, clat, clon, half_lat, half_lon):
+    """方框内 msl 最小值点为台风中心。返回 (lat, lon, pmin)。"""
+    m = _box_mask(glat, glon, clat, clon, half_lat, half_lon)
+    if not m.any():
+        raise TyphoonDataError(
+            "搜索框 (%g,%g)±(%g,%g) 越出网格" % (clat, clon, half_lat, half_lon)
+        )
+    idx = np.nanargmin(np.where(m, msl, np.nan))
+    i, j = np.unravel_index(idx, m.shape)
+    return float(glat[i]), float(glon[j]), float(msl[i, j])
+
+
+def max_wind_in_box(wind, glat, glon, clat, clon, half_lat, half_lon):
+    """方框内风速最大值（强度，参考口径：±5° 方框最大 10m 风）。"""
+    m = _box_mask(glat, glon, clat, clon, half_lat, half_lon)
+    return float(np.nanmax(wind[m]))
+
+
+def diagnose_track(
+    msl,
+    glat,
+    glon,
+    init_lat,
+    init_lon,
+    leads_hours,
+    wind=None,
+    center_half=3.0,
+    early_half=4.0,
+    early_hours=12.0,
+    intensity_half=5.0,
+):
+    """从实况初始位置起链式诊断台风中心与强度。
+
+    msl: (T, lat, lon) Pa；wind: 同形风速(m/s) 或 None；
+    leads_hours: (T,) 各时次的真实时效（小时）；
+    前 early_hours 小时用 early_half 搜索框（防初期漂移），其后 center_half；
+    强度框以**当前诊断中心**为中心（±intensity_half）。
+
+    返回 dict of list: lat, lon, pmin_hpa, vmax(无风场为 nan)。
+
+    **链式**：每一时次的搜索框中心是上一时次诊断出的中心，不是实况位置——
+    所以同一段场按不同起点切进来会得到不同结果，时效序列必须完整。
+    """
+    T = msl.shape[0]
+    out = {"lat": [], "lon": [], "pmin_hpa": [], "vmax": []}
+    plat, plon = float(init_lat), float(init_lon)
+    for k in range(T):
+        half = early_half if leads_hours[k] < early_hours else center_half
+        lat_c, lon_c, pmin = find_center_by_slp(msl[k], glat, glon, plat, plon, half, half)
+        if wind is not None:
+            vmax = max_wind_in_box(wind[k], glat, glon, lat_c, lon_c, intensity_half, intensity_half)
+        else:
+            vmax = float("nan")
+        out["lat"].append(lat_c)
+        out["lon"].append(lon_c)
+        out["pmin_hpa"].append(pmin / 100.0)
+        out["vmax"].append(vmax)
+        plat, plon = lat_c, lon_c
+    return out
+
+
+# ---------------------------------------------------------------- 误差
+
+def along_cross_track(lat0, lon0, lat_b, lon_b, lat_p, lon_p):
+    """沿路径(at)/横路径(ct)误差分解（参考脚本公式，km）。
+
+    ``(lat0,lon0)`` 是**前一个配对实况**位置，``(lat_b,lon_b)`` 是当前实况、
+    ``(lat_p,lon_p)`` 是当前预报——方向由实况路径段定，不是预报-实况连线。
+    """
+    def _alpha(la0, lo0, la, lo):
+        dlat = (la - la0) / 180.0 * math.pi
+        dlon = (lo - lo0) / 180.0 * math.pi
+        return math.atan2(dlon * math.cos((la + la0) / 2 / 180 * math.pi), dlat)
+
+    dalpha = _alpha(lat0, lon0, lat_p, lon_p) - _alpha(lat0, lon0, lat_b, lon_b)
+    len_b = float(great_circle_km(lat0, lon0, lat_b, lon_b))
+    len_p = float(great_circle_km(lat0, lon0, lat_p, lon_p))
+    ct = len_p * math.sin(dalpha)
+    at = len_p * math.cos(dalpha) - len_b
+    return at, ct
+
+
+
 
 #: 逐时效表里的字段（顺序即写盘顺序，与旧归档的 csv 列一致）
 CURVE_FIELDS = (

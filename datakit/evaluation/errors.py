@@ -5,7 +5,7 @@
 不能用裸 Exception 作为用户最终看到的科学错误。
 """
 
-from typing import Optional, Any
+from typing import Any, Optional
 
 
 class EvaluationError(Exception):
@@ -126,3 +126,7 @@ class OutputError(EvaluationError):
     """
 
     pass
+
+
+class TyphoonDataError(EvaluationError):
+    """台风数据/匹配问题（搜索框越出网格、报文缺实况等）。"""
