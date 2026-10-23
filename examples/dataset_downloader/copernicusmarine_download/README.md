@@ -1,6 +1,12 @@
-# Copernicus Marine 日度下载工具
+# Copernicus Marine 数据获取工作流
 
-该目录是独立的 Copernicus Marine 下载器，不调用或修改 `cds_download.py`。当前 Profile 对齐 `histroy/ORAS5/downloader/download.py` 的数据含义：每天下载一次 ORAS5 的 8 个变量，并将当天全部变量写入同一个 NetCDF。
+本目录负责 ORAS5 等海洋数据的源数据获取：根据 Profile 和 Batch 声明组织日度请求、
+文件落盘、重试和续传，实际下载复用官方 Copernicus Marine Toolbox。
+
+输入是数据集、变量、空间范围、日期范围和输出根目录；输出是逐日 NetCDF、计划清单及
+状态日志。当前 ORAS5 Profile 每天下载 8 个变量，保存在同一个 NetCDF 中，
+可继续交给 `examples/dataset_building/oras5_nc_to_zarr_88.py` 制作数据集。
+本任务独立于 CDS 下载方案，使用自己的服务客户端依赖和认证配置。
 
 ## 配置分层
 

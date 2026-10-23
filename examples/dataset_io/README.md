@@ -1,10 +1,14 @@
 # 数据集接入
 
+本目录负责数据工作流的源数据接入：将具体数据集的组织形式说明清楚，再提供按时间、
+变量、预报时效和成员访问数据的入口。读取结果交给后续标准化、制作、校验或评测步骤。
+
+底层文件读写复用成熟开源接口；这里封装目录结构、文件命名、时间含义和必要的组合规则。
 每个文件开头先说明实际目录组织、文件内容和时间含义，再声明必要的读取规则。
 同一数据集的组织声明、原始读写和必要的变量映射放在同一个文件里。
 评测请求、样本配对和评测输入契约由 `pipelines/evaluation` 负责。
 文件名使用数据类型前缀；不同数据集保留自己的细节，不要求套用相同的声明模板或函数参数。
-通用读写和转换复用 `datakit`，核心库不依赖本目录。
+工作流调用本目录的接入实现，公共处理组件位于 `datakit`。
 
 | 文件 | 组织形式与主要区别 |
 | --- | --- |
@@ -17,10 +21,14 @@
 | `climatology_daily.py` | 单文件全年日序场，变量可打包在 data/level 中 |
 | `climatology_station_probability.py` | 按月日时次保存站点降水概率表，阈值列有固定含义 |
 
+## 选择数据集入口
+
 需要多种实际目录组织时，直接保留清楚的声明，例如 FuXi 的 `DESCRIPTION` /
 `ENSEMBLE_DESCRIPTION`、Diamond 的 `DESCRIPTION` / `FLAT_DESCRIPTION`。
 文件内不维护 `DESCRIPTIONS` 注册表，不为评估单位口径派生新的数据集描述。
 声明不写 `implementation`；特殊文本解析器由各文件的 `open()` 显式选择。
+
+## 准备原始数据与标准化结果
 
 ```python
 from examples.dataset_io import forecast_fuxi, observation_diamond
@@ -40,6 +48,8 @@ with observation_diamond.open("/data/station", flat=True).read(all_files=True) a
     rain = observation_diamond.normalize(raw, ["tp"]).load()
 ```
 
+## 变量与输出约定
+
 `mapping` 可以省略，也可以只声明部分变量；它不是读取白名单。
 读取默认包含文件实际提供的变量；调用方可在读取后选择所需字段。
 键为标准变量名，`source` 为源变量名；换算关系为 `标准值 = 源值 * scale + offset`。
@@ -51,7 +61,9 @@ Zarr 数据直接使用 `zarr.open()` 或 `xarray.open_zarr()`，不为每个数
 ERA5 的评测取数适配位于 `pipelines/evaluation/sources/era5_zarr.py`。
 写回原始格式使用原始数据，不自动逆转映射。
 
-评估角色、GRIB 变量过滤器、文件分组路由和物理量报告口径位于
+## 与后续工作流的衔接
+
+评测角色、GRIB 变量过滤器、文件分组路由和物理量报告口径位于
 `pipelines/evaluation/sources/dataset_profiles.py`，包括 FuXi 的报告单位约定。
 BABJ 轨迹组装、气候态平滑插值和站点概率查询位于 `pipelines/evaluation/sources/`，
 由评测组件调用。既有评估配置名称保持可用。

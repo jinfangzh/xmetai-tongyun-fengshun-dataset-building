@@ -1,15 +1,14 @@
 # 数据集 IO
 
-`datakit.io` 提供通用文件读写与多文件组合，不内置数据集名称或专属变量映射。
-单文件或 xarray 兼容的 Zarr Store 直接使用 `io.open()`：
+`datakit.io` 是数据工作流的接入组件，负责按照声明定位、筛选和组合文件，并管理读取资源。
+底层格式解析与写出复用 xarray、Zarr、NumPy 等开源接口；数据集目录、时效和成员等
+组织规则由调用方提供。需要处理已有标准文件时，也可以直接使用这些开源接口。
 
-```python
-from datakit import io
+典型使用顺序是：声明数据组织 → 按时间或时效定位文件 → 读取并组合原始数据 →
+交给标准化、制作、校验或评测步骤。具体任务入口见
+[数据集接入](../../examples/dataset_io/README.md) 和 [工作流](../../pipelines/README.md)。
 
-with io.open("/data/input.nc").read() as dataset:
-    selected = dataset[["t2m"]].load()
-    io.open("/data/output.zarr").write(selected)
-```
+## 准备工作流输入
 
 按数据集组织的访问入口位于 `examples.dataset_io`，例如：
 
@@ -64,17 +63,12 @@ Zarr 使用 xarray/Zarr 的默认写入行为；压缩可通过 encoding 指定�
 | `backends/station_tables.py` | Diamond 文本和概率表格式读写 |
 | `examples/dataset_io/` | 文件组织说明、可选映射及数据集专属入口 |
 
-`io.open(path, layout=...)` 接受布局字典或外部 YAML 路径；不再接受内置数据集名称。
-后端选择直接根据文件规则进行：没有布局时使用单文件后端，有布局时使用文件集合后端。
-特殊文本由数据集入口通过 `backend=` 显式传入解析模块；通用 IO 不依赖 pipelines。
-声明中不再需要 `implementation`，也没有后端名称注册表或动态模块加载。
-原 `descriptions/` 已迁入 `examples/dataset_io` 的 Python 数据集模块。
-数据集文件开头说明实际组织形式，再声明所需的文件规则和可选映射；接口按数据集差异设置。
-数据集文件按 forecast / analysis / reanalysis / observation / climatology 前缀命名；
-评估单位口径、GRIB 变量过滤器和评估分组位于评估层。
+`io.open(path, layout=...)` 接受布局字典或 YAML 路径。具体源格式由声明和后端决定，
+特殊文本的数据集入口通过 `backend=` 传入解析模块。数据集专属声明位于
+`examples/dataset_io/`；评测角色和报告单位约定位于 `pipelines/evaluation/sources/`。
 
 `schema.DatasetMapping` / `VarSpec` 和 `schema.mapping.apply_dataset_mapping()`
-继续提供通用映射声明与执行能力。`schema.load_mapping()` 接受映射对象、字典或
+提供通用映射声明与执行能力。`schema.load_mapping()` 接受映射对象、字典或
 外部 YAML 路径；数据集默认映射从对应的 `examples.dataset_io` 模块获取。
 IO 不执行变量语义标准化、单位换算、插值或评估配对。
 

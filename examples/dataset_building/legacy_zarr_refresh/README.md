@@ -1,18 +1,16 @@
-# Legacy Zarr refresh example
+# 旧 Zarr 数据集整理工作流
 
-This directory is a self-contained dataset-building example. It is intentionally
-separate from both `era5_nc_to_zarr.py` and the supported `datakit` package API.
-It refreshes an existing normalized Zarr store; it does not convert raw ERA5
-NetCDF files and it does not infer new physical unit conversions.
+本目录将已有归一化 Zarr 的盘点、通道与坐标对齐、统计量修正、写出和校验组织成独立任务。
+输入是旧数据集和 JSON 配置，输出是按配置整理的新 Zarr 及检查记录，必要时迁移
+`const`、`weight` 和 `mask` 等附属文件。
 
-The modules cover source inspection, channel/coordinate alignment, Zarr v2
-writing, value validation and optional `const`/`weight`/`mask` migration. The
-JSON file keeps server paths and dataset-specific rules outside Python code.
+该任务保持为独立示例，尚未纳入 `datakit` 公共 API。它处理已经归一化的数据，
+与 `era5_nc_to_zarr.py` 的原始 NetCDF 制作任务分开，不推断新的物理单位换算。
+JSON 配置保存实际路径和数据集专属规则，执行组件负责源数据检查、对齐、Zarr v2 写出和数值验证。
 
-## Commands
+## 盘点输入与试运行
 
-Copy `config.example.json`, replace the placeholder paths, then inspect and
-dry-run before writing:
+在仓库根目录执行。先复制 `config.example.json` 并替换实际路径，再查看盘点结果与计划：
 
 ```bash
 python examples/dataset_building/legacy_zarr_refresh/cli.py \
@@ -23,7 +21,7 @@ python examples/dataset_building/legacy_zarr_refresh/cli.py \
   --output-root /path/to/output --count 4 --dry-run
 ```
 
-Run a pilot and then the complete conversion:
+先写出小段并检查，再运行完整整理：
 
 ```bash
 python examples/dataset_building/legacy_zarr_refresh/cli.py \
@@ -35,7 +33,7 @@ python examples/dataset_building/legacy_zarr_refresh/cli.py \
   --output-root /path/to/output --workers 4
 ```
 
-Validate an existing output independently:
+## 独立校验输出
 
 ```bash
 python examples/dataset_building/legacy_zarr_refresh/cli.py \
@@ -43,7 +41,9 @@ python examples/dataset_building/legacy_zarr_refresh/cli.py \
   --zarr /path/to/output/oras5.refreshed.zarr --full-data-check
 ```
 
-Migrate auxiliary files only after the target Zarr is complete:
+## 迁移附属文件
+
+目标 Zarr 完成后再迁移附属文件，先查看计划：
 
 ```bash
 python examples/dataset_building/legacy_zarr_refresh/cli.py \
@@ -51,26 +51,21 @@ python examples/dataset_building/legacy_zarr_refresh/cli.py \
   --output-root /path/to/output --target-name oras5.refreshed.zarr --dry-run
 ```
 
-The embedded Zarr mask is preserved by default. Replacing it from
-`const.nc/lsm` requires `--refresh-embedded-mask` after the two mask semantics
-have been verified. `const.nc` preserves its legacy channels and order; the
-migration does not invent additional channels.
+默认保留 Zarr 内嵌 mask。确认两套掩膜语义一致后，才能使用 `--refresh-embedded-mask`
+从 `const.nc/lsm` 替换它。`const.nc` 保留原有通道与顺序，不补造额外通道。
 
-## Test data
+## 验证工作流
 
-Default tests generate deterministic, very small Zarr and NetCDF inputs under
-pytest's temporary directory. They execute the complete write/read workflow and
-cover channel reordering, latitude reversal, statistics correction, masks,
-Zarr v2 dot-separated chunk keys, validation manifests and auxiliary-file
-alignment. The generated values are deliberately simple so expected results can
-be asserted exactly.
+```bash
+python -m pytest tests/dataset_building/legacy_zarr_refresh -q
+```
 
-No server data is required by the default test suite and no dataset fixture is
-committed to Git. The only skipped-by-default test is the external-store
-contract check. Set `XMETAI_REFRESH_TEST_STORE` to a completed server output and
-run the integration-marked test explicitly when server access is available.
+默认测试在 pytest 临时目录生成确定性的小型 Zarr 和 NetCDF，执行完整写读流程，覆盖通道
+重排、纬度反向、统计量修正、掩膜、Zarr v2 点分隔 chunk 键、校验记录与附属文件对齐。
+生成值保持简单，以便直接断言预期结果。
 
-A missing server path never skips the generated end-to-end or auxiliary tests.
-Those tests are the required CI gate and must pass locally and in GitHub Actions.
+默认测试不依赖服务器数据，也不向 Git 提交数据 fixture。外部 Store 契约检查默认跳过；
+设置 `XMETAI_REFRESH_TEST_STORE` 指向已完成的服务器产物后，可显式运行对应集成测试。
+服务器路径缺失不能跳过生成数据的端到端和附属量测试，这些测试必须在本地和 CI 中通过。
 
-Zarr 3.1.6 or newer is required to read the server's fixed-length string arrays.
+读取服务器固定长度字符串数组需要 Zarr 3.1.6 或更高版本。
