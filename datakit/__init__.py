@@ -2,11 +2,10 @@
 
 from . import (
     io,
+    radar,
     schema,
     transforms,
-    statistics,
     validation,
-    radar,
     visualization,
 )
 
@@ -14,7 +13,6 @@ __all__ = [
     "io",
     "schema",
     "transforms",
-    "statistics",
     "validation",
     "radar",
     "visualization",

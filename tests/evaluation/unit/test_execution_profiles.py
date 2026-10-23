@@ -19,7 +19,6 @@ from types import SimpleNamespace
 import pytest
 
 from datakit.evaluation.errors import ConfigError
-from datakit.evaluation.registry import ComponentType, get_registry
 from pipelines.evaluation.components import register_builtin_components
 from pipelines.evaluation.execution.profiles import (
     _FULL_FIELD_METRICS,
@@ -31,6 +30,7 @@ from pipelines.evaluation.execution.profiles import (
     union_profile,
 )
 from pipelines.evaluation.execution.strategy import derive_strategy
+from pipelines.evaluation.registry import ComponentType, get_registry
 
 #: 组件注册名 -> (期望 compute_class, 期望 needs_full_field)
 EXPECTED_PROFILES = {

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from datakit.evaluation.errors import ConfigError
-from datakit.evaluation.registry import (
+from pipelines.evaluation.registry import (
     get_registry,
     register_metric,
     register_protocol,
@@ -65,10 +65,10 @@ def _gridded_source(
 ) -> SourceHandle:
     """通用格点数据源：具名布局 + 通用 Reader/Catalog。
 
-    数据源之间的差别只有布局声明（见 ``datakit/schema/dataset_profiles.py``），
+    数据源之间的差别只有布局声明（见 ``examples/dataset_io``），
     所以这里不需要为每个模型写一个 Reader 类。
     """
-    from pipelines.evaluation.execution.sources import GriddedCatalog, GriddedReader
+    from pipelines.evaluation.sources import GriddedCatalog, GriddedReader
 
     selected = layout.with_step_hours(step_hours) if step_hours is not None else layout
     source_id = params.get("source_id", default_source_id)
@@ -86,7 +86,7 @@ def _gridded_source(
 
 
 def _fuxi_source(**params) -> SourceHandle:
-    from datakit.schema.dataset_profiles import FUXI_LAYOUT
+    from pipelines.evaluation.sources.dataset_profiles import FUXI_LAYOUT
 
     return _gridded_source(
         FUXI_LAYOUT, params, "fuxi", float(params.get("step_hours", 6.0))
@@ -94,7 +94,7 @@ def _fuxi_source(**params) -> SourceHandle:
 
 
 def _fuxi_ensemble_source(**params) -> SourceHandle:
-    from datakit.schema.dataset_profiles import FUXI_ENS_LAYOUT
+    from pipelines.evaluation.sources.dataset_profiles import FUXI_ENS_LAYOUT
 
     return _gridded_source(
         FUXI_ENS_LAYOUT, params, "fuxi_ens", float(params.get("step_hours", 6.0))
@@ -102,7 +102,7 @@ def _fuxi_ensemble_source(**params) -> SourceHandle:
 
 
 def _station_source(**params) -> SourceHandle:
-    from pipelines.evaluation.execution.sources import (
+    from pipelines.evaluation.sources import (
         DiamondStationCatalog,
         DiamondStationReader,
         load_station_whitelist,
@@ -122,7 +122,7 @@ def _station_source(**params) -> SourceHandle:
 
 def _babj_source(**params) -> SourceHandle:
     """BABJ 台风路径报文（diamond7）。一个文件 = 一号台风的整条路径。"""
-    from pipelines.evaluation.execution.inputs.babj import BabjCatalog, BabjSource
+    from pipelines.evaluation.sources.babj import BabjCatalog, BabjSource
 
     source_id = params.get("source_id", "babj")
     root = _require_root(params, "babj")
@@ -134,12 +134,12 @@ def _babj_source(**params) -> SourceHandle:
 
 
 def _fengqing_source(**params) -> SourceHandle:
-    from datakit.schema.dataset_profiles import FENGQING_LAYOUT
+    from pipelines.evaluation.sources.dataset_profiles import FENGQING_LAYOUT
 
     return _gridded_source(FENGQING_LAYOUT, params, "fengqing")
 
 
-def _phys_source(layout_name: str, default_source_id: str):
+def _phys_source(layout, default_source_id: str):
     """按 xu 报告口径（z500 = m²/s²、q = g/kg）读预报的通用工厂。
 
     与 ``_fuxi_source`` 等的差别只在那份布局声明，所以共用 ``_gridded_source``；
@@ -147,11 +147,9 @@ def _phys_source(layout_name: str, default_source_id: str):
     """
 
     def factory(**params) -> SourceHandle:
-        from datakit.schema.dataset_profiles import LAYOUTS
-
         override = params.get("step_hours")
         return _gridded_source(
-            LAYOUTS[layout_name],
+            layout,
             params,
             default_source_id,
             float(override) if override is not None else None,
@@ -161,7 +159,7 @@ def _phys_source(layout_name: str, default_source_id: str):
 
 
 def _cra_source(**params) -> SourceHandle:
-    from datakit.schema.dataset_profiles import CRA_LAYOUT
+    from pipelines.evaluation.sources.dataset_profiles import CRA_LAYOUT
 
     return _gridded_source(CRA_LAYOUT, params, "cra")
 
@@ -173,7 +171,7 @@ def _era5_zarr_source(**params) -> SourceHandle:
     所以有自己的 Catalog；变量/单位/分组仍走 ``ERA5_ZARR_LAYOUT`` 声明。
     一个 run 可以给两个 store（``{"pl": ..., "sfc": ...}``）。
     """
-    from pipelines.evaluation.execution.inputs.era5_zarr import (
+    from pipelines.evaluation.sources.era5_zarr import (
         Era5ZarrCatalog,
         Era5ZarrSource,
     )
@@ -192,7 +190,7 @@ def _era5_zarr_source(**params) -> SourceHandle:
 
 
 def _climatology_source(**params) -> SourceHandle:
-    from pipelines.evaluation.execution.sources import (
+    from pipelines.evaluation.sources import (
         ClimatologyCatalog,
         ClimatologyReader,
     )
@@ -209,7 +207,7 @@ def _climatology_source(**params) -> SourceHandle:
 
 def _daily_climatology_source(**params) -> SourceHandle:
     """单文件日序气候态（与按 MMDDHH 找文件的 climatology 是两种索引方式）。"""
-    from pipelines.evaluation.execution.inputs.daily_climatology import (
+    from pipelines.evaluation.sources.daily_climatology import (
         DEFAULT_SMOOTH_DAYS,
         DailyClimatologyCatalog,
         DailyClimatologySource,
@@ -231,17 +229,20 @@ def _daily_climatology_source(**params) -> SourceHandle:
 
 
 def _ref_probability_source(**params) -> SourceHandle:
-    from pipelines.evaluation.execution.inputs.reference_probability import (
+    from pipelines.evaluation.sources.reference_probability import (
         RefProbabilitySource,
     )
 
     source_id = params.get("source_id", "ref_probability")
     root = _require_root(params, "ref_probability")
+    layout = params.get("layout", params.get("description"))
+    if layout == "station_probability":
+        layout = None
     return SourceHandle(
         reader=RefProbabilitySource(
             root_dir=root,
             source_id=source_id,
-            description=params.get("description", "station_probability"),
+            layout=layout,
         ),
         catalog=None,
         config=params,
@@ -266,7 +267,7 @@ def _transform_time_window(window_hours: float, time_dim: str = "lead_time", **p
 
 
 def _transform_ensemble_mean(member_dim: str = "member", **params):
-    from datakit.evaluation.ensemble import EnsembleMeanTransform
+    from pipelines.evaluation.ensemble import EnsembleMeanTransform
 
     return EnsembleMeanTransform(member_dim=member_dim)
 
@@ -434,6 +435,12 @@ def register_builtin_components() -> None:
 
 def _register_all() -> None:
     """一次性注册全部内置组件（只被 register_builtin_components 持锁调用）。"""
+    from pipelines.evaluation.sources.dataset_profiles import (
+        FENGQING_PHYS_LAYOUT,
+        FUXI_ENS_PHYS_LAYOUT,
+        FUXI_PHYS_LAYOUT,
+    )
+
     register_reader(
         "fuxi", "1.0.0", _fuxi_source, "FuXi 网格预报：root/YYYYMMDD/NNN.nc"
     )
@@ -454,19 +461,19 @@ def _register_all() -> None:
     register_reader(
         "fuxi_phys",
         "1.0.0",
-        _phys_source("fuxi_phys", "fuxi"),
+        _phys_source(FUXI_PHYS_LAYOUT, "fuxi"),
         "FuXi 网格预报（xu 报告口径：z500 = m²/s²、q = g/kg）",
     )
     register_reader(
         "fuxi_ens_phys",
         "1.0.0",
-        _phys_source("fuxi_ens_phys", "fuxi_ens"),
+        _phys_source(FUXI_ENS_PHYS_LAYOUT, "fuxi_ens"),
         "FuXi 集合预报（xu 报告口径：z500 = m²/s²、q = g/kg）",
     )
     register_reader(
         "fengqing_phys",
         "1.0.0",
-        _phys_source("fengqing_phys", "fengqing"),
+        _phys_source(FENGQING_PHYS_LAYOUT, "fengqing"),
         "风清单卡预报（xu 报告口径：z500 = m²/s²、q = g/kg）",
     )
     register_reader("cra", "1.0.0", _cra_source, "CRA40 再分析实况")
@@ -536,7 +543,7 @@ def _register_all() -> None:
     register_metric("ts_score", "1.0.0", _metric_ts_score, "分类检验 TS/POD/FAR/BIAS")
     register_metric(
         "ensemble_probability",
-        "1.0.0",
+        "1.1.0",
         _metric_ensemble_probability,
         "集合概率评分 AROC/BS/BSS（需要原始成员）",
     )
@@ -642,7 +649,7 @@ def _register_all() -> None:
 
 def available_components() -> Dict[str, List[str]]:
     """列出各类已注册组件的短名称（用于 --list 与错误提示）。"""
-    from datakit.evaluation.registry import ComponentType
+    from pipelines.evaluation.registry import ComponentType
 
     register_builtin_components()
     return {kind.value: get_registry().names(kind) for kind in ComponentType}

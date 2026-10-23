@@ -1,5 +1,6 @@
-"""Access a single dataset through its file layout, without semantic conversion."""
+"""Raw file access and generic dataset declaration helpers."""
 
-from .dataset import open
+from ._layout import get_description, get_layout, profile_layout
+from .dataset import open, open_dataset
 
-__all__ = ["open"]
+__all__ = ["get_description", "get_layout", "open", "open_dataset", "profile_layout"]

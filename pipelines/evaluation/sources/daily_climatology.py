@@ -1,29 +1,30 @@
-"""Open a climatology source and run the requested transformation window."""
+"""Sample, smooth and package daily climatology for evaluation."""
 
 import calendar
 import logging
 import time
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any
 
 import numpy as np
 import xarray as xr
-from tqdm import tqdm
 
 from datakit import io
 from datakit.evaluation.contracts import DataIndex, DataRequest
 from datakit.evaluation.errors import DecodeError, DiscoveryError
 from datakit.io.backends.files import NETCDF_READ_LOCK
 from datakit.schema.mapping import (
-    DAILY_CLIMATOLOGY_MAPPING,
     VarSpec,
     apply_dataset_mapping,
     load_mapping,
 )
 from datakit.schema.semantics import DataKind
-from pipelines.evaluation.execution.sources import build_bundle
+from examples.dataset_io import climatology_daily
+
+from ._bundle import build_bundle
 
 log = logging.getLogger(__name__)
 
@@ -95,12 +96,16 @@ class _DailyClimatologySampler:
     def __init__(
         self,
         smooth_days: int = DEFAULT_SMOOTH_DAYS,
-        mapping=DAILY_CLIMATOLOGY_MAPPING,
+        mapping=None,
         chunk_points: int = 200_000_000,
     ):
         #: 环形平滑天数（取场前对年内日序做中心对齐的滑动平均）
         self.smooth_days = int(smooth_days)
-        self.mapping = mapping
+        self.mapping = (
+            mapping
+            if mapping is not None
+            else load_mapping(climatology_daily.DESCRIPTION["mapping"])
+        )
         #: 单次读取的点数预算。取到 200M（f4 约 800MB）是为了让常见的几十步窗口
         #: **一次读完整个纬度范围**——纬度分块每多一块，就多一遍对同一批时间块的
         #: 重复解压。这里的默认值只在时间窗口大到装不下时才会真的切块。
@@ -155,11 +160,11 @@ class _DailyClimatologySampler:
             raise ValueError(
                 f"{path} 的时间轴步长 {step}h 不能整除 24 小时（每天 {per_day} 步）"
             )
-        return int(round(per_day))
+        return round(per_day)
 
     def _year_length(self, hours: np.ndarray, steps_per_day: int, path: Path) -> int:
         total = hours.size / steps_per_day
-        days = int(round(total))
+        days = round(total)
         if abs(total - days) > 1e-6 or days not in (365, 366):
             raise ValueError(
                 f"{path} 的时间轴折合 {total} 天，只支持 365 天（闰年 2/29 并到 2/28）"
@@ -169,7 +174,7 @@ class _DailyClimatologySampler:
 
     # -- 变量场 -------------------------------------------------------------
 
-    def _field(self, dataset: xr.Dataset, name: str) -> Optional[xr.DataArray]:
+    def _field(self, dataset: xr.Dataset, name: str) -> xr.DataArray | None:
         """取一个变量的 ``(time, lat, lon)`` 惰性视图（不立即载入）。"""
         if name not in dataset.data_vars:
             return None
@@ -206,6 +211,8 @@ class _DailyClimatologySampler:
 
     def apply(self, dataset, variables, times, source_name="climatology"):
         """Sample and smooth an already opened dataset, reading only needed slices."""
+        from tqdm import tqdm
+
         path = Path(source_name)  # diagnostic label only; no path access
         times = sorted(times)
         if not times:
@@ -261,8 +268,8 @@ class _DailyClimatologySampler:
 
         lat = np.asarray(dataset["lat"].values, dtype="f8")
         lon = np.asarray(dataset["lon"].values, dtype="f8")
-        fields: Dict[str, xr.DataArray] = {}
-        units: Dict[str, str] = {}
+        fields: dict[str, xr.DataArray] = {}
+        units: dict[str, str] = {}
 
         for order, name in enumerate(
             tqdm(
@@ -308,7 +315,7 @@ class _DailyClimatologySampler:
 
     def _pick(
         self, moment: datetime, steps_per_day: int, total_steps: int, year_days: int
-    ) -> Tuple[int, int, float]:
+    ) -> tuple[int, int, float]:
         """有效时刻 -> (前一步号, 后一步号, 后一步权重)，首尾环形相接。"""
         day = _day_of_year(moment) if year_days == 365 else _day_count(moment)
         position = (day + _day_fraction(moment)) * steps_per_day
@@ -322,7 +329,7 @@ class _DailyClimatologySampler:
         self,
         field: xr.DataArray,
         wanted_steps: Sequence[int],
-        picks: Sequence[Tuple[int, int, float]],
+        picks: Sequence[tuple[int, int, float]],
         half: int,
         lat_size: int,
         lon_size: int,
@@ -435,7 +442,9 @@ class DailyClimatologySource:
         self.source_id = source_id
         self.version = version
         selected = (
-            load_mapping(mapping) if mapping is not None else DAILY_CLIMATOLOGY_MAPPING
+            load_mapping(mapping)
+            if mapping is not None
+            else load_mapping(climatology_daily.DESCRIPTION["mapping"])
         )
         variables = dict(selected.variables)
         for name in set(scales or {}) | set(units or {}):

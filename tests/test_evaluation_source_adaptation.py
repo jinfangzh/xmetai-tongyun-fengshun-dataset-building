@@ -5,14 +5,14 @@ import xarray as xr
 
 from datakit import io
 from datakit.evaluation.contracts import DataRequest
-from datakit.schema.dataset_profiles import FUXI_LAYOUT
 from datakit.schema.mapping import DatasetMapping
 from datakit.schema.semantics import DataKind, TemporalKind
-from pipelines.evaluation.execution.sources import (
+from pipelines.evaluation.sources import (
     ClimatologyCatalog,
     ClimatologyReader,
-    build_bundle,
 )
+from pipelines.evaluation.sources._bundle import build_bundle
+from pipelines.evaluation.sources.dataset_profiles import FUXI_LAYOUT
 
 
 def test_climatology_io_and_evaluation_rules(tmp_path):

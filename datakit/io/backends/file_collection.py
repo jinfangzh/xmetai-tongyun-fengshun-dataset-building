@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from .._description import templates
+from .._layout import templates
 from .files import NETCDF_READ_LOCK, open_xarray, write_file
 
 
@@ -61,7 +61,7 @@ def discover(
             "A directory of files requires a dataset description; pass a file or Zarr store for direct access"
         )
     if not patterns and layout.get("directory") and layout.get("pattern"):
-        from .._description import PathTemplate
+        from .._layout import PathTemplate
 
         template = PathTemplate(layout["directory"] + "/" + layout["pattern"])
         template.regex = re.compile(
@@ -69,12 +69,7 @@ def discover(
         )
         patterns = [(None, template)]
     if not patterns:
-        if (
-            root.is_file()
-            or root.suffix.startswith(".zarr")
-            or (root / "zarr.json").exists()
-            or (root / ".zgroup").exists()
-        ):
+        if root.is_file() or _is_store(root):
             paths = [root]
         else:
             paths = sorted(root.glob(layout.get("pattern", "*")))
@@ -177,7 +172,7 @@ _PARTITION_AXES = {
 def read_records(records, description, **options):
     """读取已发现的文件记录，供统一入口和逐文件处理复用。"""
     load = options.pop("load_partitions", False)
-    options.setdefault("chunks", None if load else {})
+    options.setdefault("chunks", None if load or len(records) == 1 else {})
     if options["chunks"] is None and len(records) > 1 and not load:
         raise ValueError(
             "Multi-file reads require chunks for bounded loading; use iter_datasets() for eager partitions"

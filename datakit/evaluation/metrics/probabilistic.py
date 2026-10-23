@@ -10,11 +10,11 @@
 实现口径与参考实现 ``ref/.../vfc/metric_categorical.py::ProbEventHistogram`` 一致：
 
 * 每个阈值维护 ``(M+1, 2)`` 直方图：行 = 超阈值成员数，列 = 观测事件 0/1；
-* 观测或**任一成员**非有限时该站点不参与统计；站点等权；
+* 观测或**任一成员**非有限时该站点不参与统计；默认站点等权，也支持显式权重；
 * ``BS = sum(hist[0]*p^2 + hist[1]*(1-p)^2) / N``；
 * 缺省 ``BS_ref = r*(1-r)``（r = 观测事件频率）；给了外部气候概率参考
   （``batch.reference``，逐站×阈值概率）时改用 ``BS_ref = mean((p_clim - o)^2)``
-  （缺 ref 站按 0 兜底），``BSS = 1 - BS/BS_ref``；
+  （缺 ref 站按 0 兜底），BS 和 BS_ref 使用相同样本与权重，``BSS = 1 - BS/BS_ref``；
 * ``AROC`` 用 ROC 曲线梯形面积，事件与非事件都出现才可算。
 """
 
@@ -36,24 +36,10 @@ from datakit.evaluation.metrics.base import (
     MetricRequirements,
     MetricState,
     ProductType,
-    single_variable,
+    field_values,
 )
 
 _TRAPZ = getattr(np, "trapezoid", getattr(np, "trapz", None))
-
-
-def _values(data: Any) -> np.ndarray:
-    """从 DataArray / DataBundle / 数组取出 numpy 值。"""
-    if isinstance(data, xr.DataArray):
-        return np.asarray(data.values, dtype="f8")
-    if isinstance(data, xr.Dataset):
-        return np.asarray(single_variable(data, "输入").values, dtype="f8")
-    if hasattr(data, "payload"):
-        payload = data.payload
-        if isinstance(payload, xr.Dataset):
-            payload = single_variable(payload, "输入")
-        return np.asarray(payload.values, dtype="f8")
-    return np.asarray(data, dtype="f8")
 
 
 def _threshold_index(
@@ -79,7 +65,7 @@ class EnsembleProbabilityScore(Metric):
             thresholds: 阈值列表 ``[(等级名, 阈值mm), ...]``（超越式口径）。
             params: 可选参数。
         """
-        super().__init__(name="prob", version="1.0.0", params=params or {})
+        super().__init__(name="prob", version="1.1.0", params=params or {})
         self.thresholds = list(thresholds)
 
     def requirements(self) -> MetricRequirements:
@@ -98,19 +84,19 @@ class EnsembleProbabilityScore(Metric):
         return True
 
     def accumulate(self, batch: EvaluationBatch) -> MetricState:
-        members = _values(batch.members)
+        members = field_values(batch.members)
         if members.ndim != 2:
             raise MetricError(
                 f"概率指标需要 (member, sample) 形态的成员场，实际 ndim={members.ndim}",
                 variable=self.name,
             )
-        observation = _values(batch.observation)
+        observation = field_values(batch.observation)
         if observation.ndim != 1:
             observation = observation.reshape(-1)
 
         mask = None
         if batch.valid_mask is not None:
-            mask = _values(batch.valid_mask)
+            mask = field_values(batch.valid_mask)
             if mask.ndim == 2:
                 mask = mask.all(axis=0)
             mask = mask.astype(bool)
@@ -121,7 +107,7 @@ class EnsembleProbabilityScore(Metric):
 
         weights = None
         if batch.weights is not None:
-            weights = _values(batch.weights)
+            weights = field_values(batch.weights)
             if weights.ndim == 2 and weights.shape == members.shape:
                 weights = weights[0]  # 站点权重与成员无关
             if weights.shape != observation.shape:
@@ -139,7 +125,7 @@ class EnsembleProbabilityScore(Metric):
         ref_probs, ref_thresholds = self._reference_values(batch.reference, ok)
 
         histograms: Dict[str, np.ndarray] = {}
-        bs_ref_sums: Dict[str, Tuple[float, int]] = {}
+        bs_ref_sums: Dict[str, Tuple[float, float]] = {}
         for name, threshold in self.thresholds:
             exceeded = (members_ok >= threshold).sum(axis=0).astype("i8")
             event = (observation_ok >= threshold).astype("i8")
@@ -160,9 +146,14 @@ class EnsembleProbabilityScore(Metric):
                     # 缺 ref 站气候概率按 0 兜底（与参考实现 RefProb 口径一致）
                     p_clim = np.nan_to_num(ref_probs[:, ti], nan=0.0)
                     event_f = (observation_ok >= threshold).astype("f8")
+                    squared_error = (p_clim - event_f) ** 2
                     bs_ref_sums[name] = (
-                        float(((p_clim - event_f) ** 2).sum()),
-                        int(event_f.size),
+                        (float(squared_error.sum()), float(event_f.size))
+                        if weights_ok is None
+                        else (
+                            float(np.sum(weights_ok * squared_error)),
+                            float(weights_ok.sum()),
+                        )
                     )
 
         return MetricState(
@@ -194,7 +185,7 @@ class EnsembleProbabilityScore(Metric):
             )
             values = np.asarray(reference.values, dtype="f8")
         else:
-            values = _values(reference)
+            values = field_values(reference)
             thresholds = None
         if ok is not None and values.shape[0] == ok.shape[0]:
             values = values[ok]
@@ -209,7 +200,7 @@ class EnsembleProbabilityScore(Metric):
             name: np.zeros_like(histogram)
             for name, histogram in first.data["histograms"].items()
         }
-        bs_ref_sums: Optional[Dict[str, Tuple[float, int]]] = None
+        bs_ref_sums: Optional[Dict[str, Tuple[float, float]]] = None
         for state in states:
             if state.metric_name != first.metric_name:
                 raise MetricError(
@@ -282,7 +273,7 @@ class EnsembleProbabilityScore(Metric):
         name: str,
         threshold: float,
         n_points: int = 0,
-        bs_ref: Optional[Tuple[float, int]] = None,
+        bs_ref: Optional[Tuple[float, float]] = None,
     ) -> Dict[str, Any]:
         total = float(histogram.sum())
         if total <= 0:
@@ -310,9 +301,9 @@ class EnsembleProbabilityScore(Metric):
         )
         base_rate = event / total
         if bs_ref is not None:
-            # 外部气候概率参考：BS_ref = mean((p_clim − o)²)，与 BS 同批样本
-            ref_sum, ref_count = bs_ref
-            brier_reference = ref_sum / ref_count if ref_count else float("nan")
+            # 外部参考与 BS 使用相同的有效样本及权重。
+            ref_sum, ref_weight = bs_ref
+            brier_reference = ref_sum / ref_weight if ref_weight else float("nan")
         else:
             brier_reference = base_rate * (1 - base_rate)
 

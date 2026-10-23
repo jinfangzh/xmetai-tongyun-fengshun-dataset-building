@@ -61,7 +61,7 @@ def infer_format(path: PathLike) -> str:
     """Infer a supported data format from a path suffix."""
     suffix = local_path(path).suffix.lower()
     try:
-        return normalize_format(_FORMAT_BY_SUFFIX[suffix])
+        return _FORMAT_BY_SUFFIX[suffix]
     except KeyError as exc:
         raise ValueError(f"Unsupported data suffix: {suffix or '<none>'}") from exc
 
@@ -98,25 +98,25 @@ def write_file(dataset, path, options):
     if path.exists() and mode not in {"w", "a", "r+"}:
         raise FileExistsError(f"Refusing to overwrite an existing output: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    suffix = path.suffix.lower()
-    if suffix.startswith(".zarr"):
+    format_name = infer_format(path)
+    if format_name == "zarr":
         chunks = options.pop("chunks", None)
         if chunks is not None:
             dataset = dataset.chunk(chunks)
         dataset.to_zarr(str(path), mode=mode or "w-", **options)
-    elif suffix in {".nc", ".cdf", ".netcdf", ".netcdf4"}:
+    elif format_name == "netcdf":
         dataset.to_netcdf(path, mode=mode or "w", **options)
-    elif suffix in {".grib", ".grib2", ".grb", ".grb2"}:
+    elif format_name == "grib":
         from cfgrib.xarray_to_grib import to_grib
 
         to_grib(dataset, path, **options)
-    elif suffix == ".npz":
+    elif path.suffix.lower() == ".npz":
         with path.open("wb") as stream:
             np.savez(
                 stream,
                 **{name: value.values for name, value in dataset.data_vars.items()},
             )
-    elif suffix == ".npy":
+    elif path.suffix.lower() == ".npy":
         if len(dataset.data_vars) != 1:
             raise ValueError("NPY output requires exactly one variable")
         with path.open("wb") as stream:
@@ -153,14 +153,12 @@ def _detect_format(path) -> str:
 @contextmanager
 def open_xarray(path, **options):
     """Resource owner for public Xarray/NumPy backends; no product rules."""
-    format_name = options.pop("format", None) or _detect_format(path)
+    format_name = normalize_format(options.pop("format", None) or _detect_format(path))
     fallback = options.pop("engine_fallback", None)
     variable = options.pop("variable", None)
     variable_filters = options.pop("variable_filters", None)
     prepare = options.pop("prepare", None)
     if variable_filters:
-        from contextlib import ExitStack
-
         with ExitStack() as stack:
             frames = []
             for name, filters in variable_filters.items():
@@ -169,7 +167,14 @@ def open_xarray(path, **options):
                     **field_options.get("backend_kwargs", {}),
                     "filter_by_keys": filters,
                 }
-                dataset = stack.enter_context(open_xarray(path, **field_options))
+                dataset = stack.enter_context(
+                    open_xarray(
+                        path,
+                        format=format_name,
+                        engine_fallback=fallback,
+                        **field_options,
+                    )
+                )
                 if prepare is not None:
                     dataset = prepare(dataset, [name])
                 if dataset is not None:
@@ -304,7 +309,7 @@ def read_records(records, description, **options):
 
 def write(dataset, root, description, **options):
     """按当前布局写出 Dataset，返回输出文件路径列表。"""
-    from .._description import templates
+    from .._layout import templates
 
     patterns = templates(description)
     if patterns:

@@ -6,8 +6,6 @@ import numpy as np
 import xarray as xr
 
 from datakit.evaluation.contracts import DataBundle, Provenance, SemanticMetadata
-from datakit.evaluation.ensemble import compute_ensemble_mean as mean_bundle
-from datakit.evaluation.matching import _latitude_weights
 from datakit.schema.semantics import DataKind, TemporalKind
 from datakit.transforms import (
     GridToStationInterpolator,
@@ -17,6 +15,8 @@ from datakit.transforms import (
     resize,
     window_sum_at,
 )
+from pipelines.evaluation.ensemble import compute_ensemble_mean as mean_bundle
+from pipelines.evaluation.matching import _latitude_weights
 
 
 def test_grid_alignment_and_station_interpolation():

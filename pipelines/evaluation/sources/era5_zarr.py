@@ -1,7 +1,14 @@
-# -*- coding: utf-8 -*-
-"""ERA5 再分析 zarr 实况读取器。
+"""ERA5 再分析 Zarr 数据及评测取数。
 
-与 ``io/gridded.py`` 的通用格点读取器的区别在数据形态，不在流程：
+    pressure.zarr/              气压层 store（stores["pl"]）
+      data                      打包的通道数组
+      channel_names.json        通道名，也支持从 channel 数组读取
+      time / lat / lon          时间和空间坐标
+    surface.zarr/               地面 store（stores["sfc"]）
+
+直接使用原生 Zarr，不额外封装 open()。下方接口按评测请求取通道和有效时刻。
+
+与 ``sources/gridded.py`` 的通用格点读取器的区别在数据形态，不在流程：
 
     通用格点源    一堆小文件，一个文件一个时次/时效，靠目录模板 + 文件名正则发现
     ERA5 zarr     **一个 store 装下全部时次**，通道名旁挂在 channel_names.json 里，
@@ -10,7 +17,7 @@
 所以发现阶段没什么可"发现"的——store 是整块的，``Era5ZarrCatalog`` 只校验路径存在；
 真正的活在读：通道名解析、轴定位、按有效时刻精确取数。
 
-变量/单位/分组仍走 ``io/layouts.py`` 的 ``ERA5_ZARR_LAYOUT`` 声明，
+变量/单位/分组仍走 ``sources/dataset_profiles.py`` 的 ``ERA5_ZARR_LAYOUT`` 声明，
 配置侧写标准名（``z500``），store 里的通道名（``z_500``）由布局负责翻译。
 """
 
@@ -18,10 +25,11 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any
 
 import numpy as np
 import xarray as xr
@@ -32,10 +40,12 @@ from datakit.evaluation.contracts import (
     DataRequest,
 )
 from datakit.evaluation.errors import DecodeError, DiscoveryError
-from datakit.schema.dataset_profiles import ERA5_ZARR_LAYOUT, DatasetProfile
 from datakit.schema.mapping import DatasetMapping, apply_dataset_mapping
 from datakit.schema.semantics import TemporalKind
-from pipelines.evaluation.execution.sources import build_bundle
+from pipelines.evaluation.sources._profile import DatasetProfile
+from pipelines.evaluation.sources.dataset_profiles import ERA5_ZARR_LAYOUT
+
+from ._bundle import build_bundle
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +77,7 @@ _UNIT_SECONDS = {
     "s": 1.0,
 }
 
-_EPOCH = datetime(1970, 1, 1)
+_EPOCH = datetime(1970, 1, 1)  # noqa: DTZ001 -- naive UTC axis used for source times
 
 
 def _seconds_since_epoch(moment: datetime) -> float:
@@ -77,7 +87,7 @@ def _seconds_since_epoch(moment: datetime) -> float:
     return (moment - _EPOCH).total_seconds()
 
 
-def _parse_time_units(units: Any, path: str) -> Tuple[float, datetime]:
+def _parse_time_units(units: Any, path: str) -> tuple[float, datetime]:
     """解析 zarr 时间轴的 ``units`` 属性（形如 ``hours since 2025-01-01 00:00:00``）。
 
     Returns:
@@ -113,7 +123,7 @@ def _channel_axis(shape: Sequence[int], count: int, path: str) -> int:
     return 1 if 1 in hits else hits[-1]
 
 
-def _axis_for_size(shape: Sequence[int], size: int, taken: set) -> Optional[int]:
+def _axis_for_size(shape: Sequence[int], size: int, taken: set) -> int | None:
     """在未被占用的轴里找长度等于 size 的那个；不唯一就返回 None。"""
     hits = [
         index
@@ -130,8 +140,8 @@ class _Store:
         self.key = key
         self.path = str(path)
         self._group: Any = None
-        self._names: Optional[List[str]] = None
-        self._alias: Dict[str, str] = {}
+        self._names: list[str] | None = None
+        self._alias: dict[str, str] = {}
 
     # -- 打开 ---------------------------------------------------------------
 
@@ -140,7 +150,7 @@ class _Store:
             return self._group
         try:
             import zarr
-        except ImportError as exc:  # pragma: no cover - 取决于运行环境
+        except ImportError as exc:
             raise DecodeError("读取 ERA5 zarr 需要 zarr 包：pip install zarr") from exc
         if not Path(self.path).exists():
             raise DecodeError(f"ERA5 zarr store 不存在: {self.path}")
@@ -159,7 +169,7 @@ class _Store:
 
     # -- 通道名 -------------------------------------------------------------
 
-    def channel_names(self) -> List[str]:
+    def channel_names(self) -> list[str]:
         """通道名清单：优先旁挂的 channel_names.json，退回 store 内的 channel 数组。
 
         名字统一 ``strip().lower()``——参考实现也是这个口径，配置侧才能写小写标准名。
@@ -193,7 +203,7 @@ class _Store:
         }
         return self._names
 
-    def resolve_channel(self, wanted: str) -> Optional[str]:
+    def resolve_channel(self, wanted: str) -> str | None:
         """标准/通道名 -> store 里实际的通道名。
 
         先精确匹配；不中再按"去掉下划线"匹配（配置写 ``z500``、store 里叫 ``z_500``）。
@@ -206,7 +216,7 @@ class _Store:
 
     # -- 时间轴 -------------------------------------------------------------
 
-    def time_values(self) -> Tuple[np.ndarray, float, datetime]:
+    def time_values(self) -> tuple[np.ndarray, float, datetime]:
         """返回 (时间轴原始值, 单位换算系数, 起算时刻)。"""
         axis = self.member("time")
         raw = np.asarray(axis[:], dtype="f8")
@@ -236,7 +246,7 @@ class _Store:
         axis = _channel_axis(shape, len(self.channel_names()), self.path)
 
         taken = {axis}
-        axes: Dict[str, Optional[int]] = {"channel": axis}
+        axes: dict[str, int | None] = {"channel": axis}
         for name, size in (("time", time_size), ("lat", lat_size), ("lon", lon_size)):
             found = _axis_for_size(shape, size, taken)
             if found is not None:
@@ -253,7 +263,7 @@ class _Store:
                 f"{self.path} 的 data 形状 {shape} 无法定位 time/lat/lon 轴"
             )
 
-        slicer: List[Any] = [slice(None)] * len(shape)
+        slicer: list[Any] = [slice(None)] * len(shape)
         slicer[axes["time"]] = slice(lo, hi + 1)
         # 通道轴保留成长度 1，好让转置后的维度顺序固定，之后再 squeeze
         slicer[axes["channel"]] = slice(channel_index, channel_index + 1)
@@ -269,7 +279,7 @@ class Era5ZarrCatalog:
     配置声明的每个 store 都存在——路径错了要立刻报，不能等读到一半才炸。
     """
 
-    def __init__(self, stores: Dict[str, str]):
+    def __init__(self, stores: dict[str, str]):
         self.stores = {str(key): str(value) for key, value in (stores or {}).items()}
 
     def discover(self, request: DataRequest) -> DataIndex:
@@ -296,7 +306,7 @@ class Era5ZarrSource:
     def __init__(
         self,
         source_id: str,
-        stores: Dict[str, str],
+        stores: dict[str, str],
         layout: DatasetProfile = ERA5_ZARR_LAYOUT,
         version: str = "1.0.0",
     ):
@@ -304,7 +314,7 @@ class Era5ZarrSource:
         self.version = version
         self.stores = {str(key): str(value) for key, value in (stores or {}).items()}
         self.layout = layout
-        self._opened: Dict[str, _Store] = {}
+        self._opened: dict[str, _Store] = {}
 
     # -- 内部 ---------------------------------------------------------------
 
@@ -317,7 +327,7 @@ class Era5ZarrSource:
             self._opened[key] = _Store(key, self.stores[key])
         return self._opened[key]
 
-    def _locate(self, name: str) -> Optional[Tuple[_Store, str]]:
+    def _locate(self, name: str) -> tuple[_Store, str] | None:
         """标准名 -> (store, 通道名)。"""
         spec = self.layout.spec_for(name)
         wanted = spec.source if spec is not None and spec.source else name
@@ -330,8 +340,8 @@ class Era5ZarrSource:
         return None
 
     def _time_indices(
-        self, store: _Store, times: List[datetime]
-    ) -> Tuple[List[int], List[datetime]]:
+        self, store: _Store, times: list[datetime]
+    ) -> tuple[list[int], list[datetime]]:
         """把请求的有效时刻精确匹配到 store 的时间轴上。
 
         不命中就报错并列出前几个缺失时刻——静默错配比报错危险得多。
@@ -342,8 +352,8 @@ class Era5ZarrSource:
         order = np.argsort(available)
         available_sorted = available[order]
 
-        indices: List[int] = []
-        missing: List[datetime] = []
+        indices: list[int] = []
+        missing: list[datetime] = []
         for moment, want in zip(times, wanted):
             position = int(np.searchsorted(available_sorted, want))
             position = min(max(position, 0), len(available_sorted) - 1)
@@ -368,8 +378,8 @@ class Era5ZarrSource:
                 "否则会整块载入整个 store"
             )
         times = sorted(request.init_times)
-        resolved: Dict[str, Tuple[_Store, str]] = {}
-        unresolved: List[str] = []
+        resolved: dict[str, tuple[_Store, str]] = {}
+        unresolved: list[str] = []
         for name in request.variables:
             found = self._locate(str(name))
             if found is None:
@@ -387,13 +397,13 @@ class Era5ZarrSource:
                 f"ERA5 zarr 里没有任何请求的变量可用: {list(request.variables)}"
             )
 
-        fields: Dict[str, xr.DataArray] = {}
-        semantics: Dict[str, TemporalKind] = {}
-        source_variables: Dict[str, str] = {}
-        files: List[str] = []
+        fields: dict[str, xr.DataArray] = {}
+        semantics: dict[str, TemporalKind] = {}
+        source_variables: dict[str, str] = {}
+        files: list[str] = []
 
         # 同一个 store 只开一次，且只读覆盖到的时间块
-        by_store: Dict[str, List[Tuple[str, _Store, str]]] = {}
+        by_store: dict[str, list[tuple[str, _Store, str]]] = {}
         for name, (store, channel) in resolved.items():
             by_store.setdefault(store.key, []).append((name, store, channel))
 

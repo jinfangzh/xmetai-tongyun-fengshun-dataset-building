@@ -33,10 +33,10 @@ import xarray as xr
 
 from datakit.evaluation.contracts import DataIndex, DataRequest, EvaluationBatch
 from datakit.evaluation.errors import ConfigError
-from datakit.evaluation.matching import Matcher, add_derived_variables
 from datakit.evaluation.metrics.track_error import diagnose_track
 from datakit.transforms.spatial import align_lon_to, align_to_grid
 from datakit.transforms.temporal import window_sum_at
+from pipelines.evaluation.matching import Matcher, add_derived_variables
 from pipelines.evaluation.spec import PipelineSpec, hourly_times
 
 log = logging.getLogger(__name__)

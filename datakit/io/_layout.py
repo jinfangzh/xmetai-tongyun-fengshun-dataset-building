@@ -1,4 +1,4 @@
-"""Load public dataset descriptions and parse their relative path templates."""
+"""Validate explicit file layouts and parse reversible relative path templates."""
 
 from __future__ import annotations
 
@@ -6,47 +6,45 @@ import re
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import datetime
-from importlib.resources import files
 from pathlib import Path
 from string import Formatter
 from typing import Any
 
 
-def list_descriptions() -> tuple[str, ...]:
-    return tuple(
-        sorted(
-            p.name[:-5]
-            for p in files("datakit.io.descriptions").iterdir()
-            if p.name.endswith(".yaml")
-        )
-    )
-
-
-def load_description(value: str | Path | Mapping[str, Any]) -> dict[str, Any]:
-    import yaml
-
+def get_description(value: str | Path | Mapping[str, Any]) -> dict[str, Any]:
+    """Load an explicit declaration or return an independent copy."""
     if isinstance(value, Mapping):
         result = deepcopy(dict(value))
     else:
+        import yaml
+
         candidate = Path(value).expanduser()
-        if candidate.is_file():
-            content = candidate.read_text(encoding="utf-8")
-        else:
-            name = str(value).removesuffix(".yaml")
-            if name not in list_descriptions():
-                raise ValueError(f"Unknown dataset description: {value!r}")
-            content = (
-                files("datakit.io.descriptions")
-                .joinpath(name + ".yaml")
-                .read_text(encoding="utf-8")
+        if not candidate.is_file():
+            raise ValueError(
+                "IO requires an explicit layout mapping or YAML path; "
+                "named datasets are configured in examples.dataset_io"
             )
-        result = yaml.safe_load(content)
+        result = yaml.safe_load(candidate.read_text(encoding="utf-8"))
     if not isinstance(result, dict):
-        raise TypeError("A dataset description must be a mapping")
-    required = {"name", "implementation", "layout", "example"}
+        raise TypeError("A dataset layout must be a mapping")
+    return result
+
+
+def get_layout(value: str | Path | Mapping[str, Any]) -> dict[str, Any]:
+    """Extract and validate raw file rules without applying variable mappings."""
+    result = get_description(value)
+    result.pop("mapping", None)
+    result.pop("contract", None)
+    return load_layout(result)
+
+
+def load_layout(value: str | Path | Mapping[str, Any]) -> dict[str, Any]:
+    result = get_description(value)
+    required = {"name", "layout", "example"}
     if missing := required - result.keys():
-        raise ValueError(f"Missing description fields: {sorted(missing)}")
+        raise ValueError(f"Missing layout fields: {sorted(missing)}")
     allowed = required | {
+        "format",
         "notes",
         "lead_time",
         "member",
@@ -54,12 +52,11 @@ def load_description(value: str | Path | Mapping[str, Any]) -> dict[str, Any]:
         "cycle",
         "thresholds",
         "time_zone",
-        "mapping",
     }
     if unknown := result.keys() - allowed:
-        raise ValueError(f"Unknown description fields: {sorted(unknown)}")
-    if "mapping" in result and not isinstance(result["mapping"], dict):
-        raise TypeError("mapping must be a mapping")
+        raise ValueError(f"Unknown layout fields: {sorted(unknown)}")
+    if "format" in result and not isinstance(result["format"], dict):
+        raise TypeError("format must be a mapping")
     if not isinstance(result["layout"], dict):
         raise TypeError("layout must be a mapping")
     allowed_layout = {"directory", "filename", "files", "groups", "pattern"}
@@ -76,7 +73,7 @@ def load_description(value: str | Path | Mapping[str, Any]) -> dict[str, Any]:
     if patterns and not any(
         template.parse(result["example"]) is not None for _, template in patterns
     ):
-        raise ValueError("The description example does not match its layout")
+        raise ValueError("The layout example does not match its layout")
     return result
 
 
@@ -176,8 +173,10 @@ class PathTemplate:
         return result
 
 
-def templates(description: Mapping[str, Any]) -> list[tuple[str | None, PathTemplate]]:
-    layout = description["layout"]
+def templates(
+    layout_config: Mapping[str, Any],
+) -> list[tuple[str | None, PathTemplate]]:
+    layout = layout_config["layout"]
     directory = layout.get("directory", "")
     names = layout.get("files", {None: layout.get("filename")})
     return [
@@ -185,3 +184,11 @@ def templates(description: Mapping[str, Any]) -> list[tuple[str | None, PathTemp
         for group, name in names.items()
         if name is not None
     ]
+
+
+def profile_layout(profile) -> dict:
+    """Return independent IO rules, applying the selected forecast step."""
+    layout = deepcopy(dict(profile.io_layout))
+    if "hours_per_index" in layout.get("lead_time", {}):
+        layout["lead_time"]["hours_per_index"] = profile.step_hours
+    return layout

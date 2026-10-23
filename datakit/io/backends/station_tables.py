@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
-from .._description import templates
+from .._layout import templates
 
 
 def read_records(records, description, **options):
@@ -22,14 +22,18 @@ def read_records(records, description, **options):
     tables = []
     if options:
         raise TypeError(f"Text table options are not supported: {sorted(options)}")
-    probability = description["implementation"] == "station_probability"
+    probability = "thresholds" in description
+    file_format = description.get("format", {})
+    columns = file_format.get(
+        "columns", ["station", "lon", "lat", "altitude", "precipitation"]
+    )
     frames, manifest = [], []
     for record in records:
-        skip = 0 if probability else 2
-        with record.path.open(encoding="gbk") as stream:
+        skip = file_format.get("header_lines", 0 if probability else 2)
+        with record.path.open(encoding=file_format.get("encoding", "gbk")) as stream:
             headers = [stream.readline() for _ in range(skip)]
             rows = np.loadtxt(stream, ndmin=2)
-        minimum = len(description["thresholds"]) + 1 if probability else 5
+        minimum = len(description["thresholds"]) + 1 if probability else len(columns)
         if (
             rows.size == 0
             or rows.shape[1] < minimum
@@ -48,7 +52,11 @@ def read_records(records, description, **options):
         ):
             raise ValueError(f"Station IDs must be unique integers: {record.path}")
         if fixed_metadata and not probability:
-            tables.append((record, headers, rows))
+            canonical = [
+                columns.index(name)
+                for name in ("station", "lon", "lat", "altitude", "precipitation")
+            ]
+            tables.append((record, headers, rows[:, canonical]))
             continue
         if probability:
             dataset = xr.Dataset(
@@ -60,8 +68,8 @@ def read_records(records, description, **options):
             )
             axis = "cycle_time"
         else:
-            names = ["lon", "lat", "altitude", "precipitation"] + [
-                f"column_{i}" for i in range(5, rows.shape[1])
+            names = columns[1:] + [
+                f"column_{i}" for i in range(len(columns), rows.shape[1])
             ]
             dataset = xr.Dataset(
                 {name: ("station", rows[:, i + 1]) for i, name in enumerate(names)},
@@ -101,7 +109,7 @@ def write(dataset, root, description, **options):
     patterns = templates(description)
     if len(patterns) != 1:
         raise ValueError("Text writing requires one reversible filename template")
-    probability = description["implementation"] == "station_probability"
+    probability = "thresholds" in description
     manifest = dataset.encoding.get("dataset_io_manifest")
     if not manifest:
         raise NotImplementedError(
@@ -127,7 +135,9 @@ def write(dataset, root, description, **options):
         plans.append((path, record["headers"], rows))
     for path, headers, rows in plans:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("x", encoding="gbk") as stream:
+        with path.open(
+            "x", encoding=description.get("format", {}).get("encoding", "gbk")
+        ) as stream:
             stream.writelines(headers)
             np.savetxt(stream, rows, fmt="%.17g")
     return [str(p) for p, *_ in plans]
@@ -141,9 +151,9 @@ def parse_station_file_time(path: Path) -> datetime:
     path = Path(path)
     name = path.stem
     if len(name) == 10 and name.isdigit():
-        return datetime.strptime(name, "%Y%m%d%H")
+        return datetime.strptime(name, "%Y%m%d%H")  # noqa: DTZ007 -- preserve source wall time
     if len(name) == 2 and name.isdigit() and path.parent.name.isdigit():
-        return datetime.strptime(path.parent.name + name, "%Y%m%d%H")
+        return datetime.strptime(path.parent.name + name, "%Y%m%d%H")  # noqa: DTZ007 -- preserve source wall time
     raise ValueError(f"无法解析观测文件时间: {path}")
 
 

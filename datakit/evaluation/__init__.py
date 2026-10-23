@@ -1,7 +1,7 @@
-"""
-datakit.evaluation: 气象模型离线评测框架
+"""Meteorological evaluation metrics, shared data contracts and errors.
 
-提供数据契约、指标和配对；流程执行与结果报告位于 ``pipelines.evaluation``。
+Source adaptation, matching, component registration and execution live in
+``pipelines.evaluation``.
 """
 
 __version__ = "0.1.0"

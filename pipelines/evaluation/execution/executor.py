@@ -27,7 +27,12 @@ from __future__ import annotations
 import logging
 import multiprocessing
 import pickle
-from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import (
+    Future,
+    ProcessPoolExecutor,
+    ThreadPoolExecutor,
+    as_completed,
+)
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
@@ -35,12 +40,12 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from tqdm import tqdm
 
-from pipelines.evaluation.components import register_builtin_components
 from datakit.evaluation.errors import ConfigError, EvaluationError, MetricError
+from pipelines.evaluation.components import register_builtin_components
 from pipelines.evaluation.execution.profiles import needs_full_field
-from datakit.evaluation.registry import ComponentType, get_registry
-from datakit.evaluation.matching import narrow_batch, restrict_to_latitude_band
+from pipelines.evaluation.matching import narrow_batch, restrict_to_latitude_band
 from pipelines.evaluation.protocols import PipelineContext
+from pipelines.evaluation.registry import ComponentType, get_registry
 from pipelines.evaluation.spec import PipelineSpec
 
 log = logging.getLogger(__name__)

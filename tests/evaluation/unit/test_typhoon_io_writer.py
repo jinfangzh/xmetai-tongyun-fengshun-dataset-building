@@ -9,7 +9,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from pipelines.evaluation.execution.inputs.babj import BabjSource, BabjCatalog
 from datakit.evaluation.contracts import DataRequest
 from datakit.evaluation.errors import DiscoveryError
 from datakit.evaluation.metrics.track_error import CURVE_FIELDS, ENS_EXTRA_FIELDS
@@ -19,6 +18,7 @@ from pipelines.evaluation.reporting.views import (
 from pipelines.evaluation.reporting.views import (
     write_typhoon_cases as _writer_typhoon_cases,
 )
+from pipelines.evaluation.sources.babj import BabjCatalog, BabjSource
 
 # ---------------------------------------------------------------- BABJ reader
 

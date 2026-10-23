@@ -35,7 +35,6 @@ RMSE 随时效表、活跃度表、**分波段功率比表**、图表索引、�
 
 from __future__ import annotations
 
-
 import argparse
 import json
 from datetime import datetime
@@ -45,7 +44,7 @@ from typing import Dict, List, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from ._metadata import manifest_info_from
+from ._metadata import manifest_info_from, source_of
 
 #: 指标语义表 —— **唯一**放指标语义的地方（出图、报告、诊断都从这里取）。
 #:
@@ -757,13 +756,6 @@ def diagnose(
 # --------------------------------------------------------------------------- #
 
 
-def _source_of(sources: Optional[Dict[str, str]], name: str) -> str:
-    """来源标注：给了路径就写路径，否则如实写"未提供"。"""
-    if sources and sources.get(name):
-        return f"`{sources[name]}`"
-    return "未提供（调用方应在 sources 里给出文件路径）"
-
-
 def _file_summary(paths: Sequence[str], limit: int = 1) -> str:
     """文件清单只写个数与首尾，避免把 60 条绝对路径全抄进报告。"""
     if not paths:
@@ -912,7 +904,7 @@ def build_field_report(
     # ---- 一、评测对象与数据来源 -------------------------------------------- #
     head: List[str] = []
     run_id = info.get("run_id") or "未提供"
-    head.append(f"- **run_id**：`{run_id}`（来源：{_source_of(sources, 'scores')}）")
+    head.append(f"- **run_id**：`{run_id}`（来源：{source_of(sources, 'scores')}）")
     head.append(
         f"- **评测对象**：{model_name}"
         f"（预报源 `{info.get('forecast_reader') or info.get('model_id') or '未提供'}`）"

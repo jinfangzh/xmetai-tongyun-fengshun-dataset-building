@@ -55,10 +55,7 @@ all = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["datakit*", "pipelines*"]
-
-[tool.setuptools.package-data]
-"datakit.io.descriptions" = ["*.yaml"]
+include = ["datakit*", "pipelines*", "examples", "examples.dataset_io*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

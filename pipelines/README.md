@@ -6,18 +6,17 @@
 `dataset` 承载数据集制作、检查和导出；`evaluation` 承载评测流程、执行策略
 和命令行入口。具体数据、日期和输出目录由 `examples/` 的配置提供。
 
-`dataset/_conversion.py`、`dataset/_datasets.py`、`dataset/_statistics.py`、
-`dataset/_radar.py` 和 `dataset/_ensemble.py` 只是控制单文件体积的私有实现，
-不是额外的公共分类。
+`dataset/` 下划线开头的文件是私有实现，不是额外的公共分类。
+
+数据集接入方式见 [examples/dataset_io/README.md](../examples/dataset_io/README.md)。原始读取与标准化显式分开，
+数据集专属规则不再放在 `datakit.io` 的 YAML 中。
 
 ## 2. 数据集流程
 
 - 格式转换：本地 NetCDF、GRIB、NumPy、Zarr 之间的目标转换和导出。
-- 数据集检查与按年份分区。
-- 统计产物：归一化、差分、气候态和分位数文件构建。
-- 雷达数据集：CINRAD 和 MeteoNet 转 Zarr。
-- 集合数据集：按日期和预报时效组织 NetCDF 成员并写入 Zarr。
-- 路径检查：打开 Zarr 并生成逐通道或逐层范围报告。
+- 按时间和通道拆分 NetCDF，提取原始实况。
+- 标准数据集校验、转换对比和组合对比。
+- Zarr 与 NetCDF 一致性检查。
 
 ## 3. 数据集公共函数导入
 
@@ -25,11 +24,9 @@
 
 ```python
 from pipelines.dataset import (
-    build_normalization_statistics,
-    check_zarr_range,
-    convert_cinrad_to_zarr,
-    convert_ensemble_netcdf_to_zarr,
     convert_to_zarr,
+    extract_zarr_to_netcdf,
+    validate_standard_dataset,
 )
 ```
 
@@ -46,17 +43,33 @@ convert_to_zarr(
 ```
 
 ```python
-from pipelines.dataset import check_zarr_range
+from datakit import io
+from datakit.validation import analyze_range
 
-report = check_zarr_range("dataset.zarr", variable="data", axis="level")
+with io.open("dataset.zarr").read() as dataset:
+    report = analyze_range(dataset["data"], axis="level")
 print(report.to_text())
 ```
 
 ## 5. 评测流程
 
-评测数据契约、配对和指标位于 `datakit.evaluation`；
-`pipelines.evaluation` 将它们接成完整流程，`reporting/` 负责结果表、
-派生视图和报告文件。Fengqing 应用配置位于
+评测指标、共享数据契约和异常位于 `datakit.evaluation`。
+数据源适配、配对、组件注册、集合变换及执行位于 `pipelines.evaluation`：
+
+```text
+evaluation/
+  sources/       # 数据源适配、变量与评测语义约定、DataBundle 构造
+  matching.py    # 预报、实况和参考场配对，生成 EvaluationBatch
+  registry.py    # reader、transform、metric、writer 等组件注册
+  ensemble.py    # 保留评测契约的集合平均变换
+  protocols.py   # 站点降水、台风等场景规则
+  execution/     # 切块、缓存、并发执行和归并
+  reporting/     # 结果表、派生视图和报告
+```
+
+`sources/` 调用 `datakit.io` 和 `examples.dataset_io` 的原始读取接口，
+原始数据集模块不依赖评测流程。`serial.py` 保留专用串行入口。
+Fengqing 应用配置位于
 `examples/evaluation/configs/`，在仓库根目录可按配置名运行：
 
 ```bash

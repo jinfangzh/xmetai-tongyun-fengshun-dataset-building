@@ -5,9 +5,9 @@
 注册名称必须唯一，未注册组件在 validate 阶段失败。
 """
 
-from typing import Dict, Callable, Any, Optional, List
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, Callable, Dict, List, Optional
 
 from datakit.evaluation.errors import ConfigError
 

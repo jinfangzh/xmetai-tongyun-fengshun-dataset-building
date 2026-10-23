@@ -18,11 +18,11 @@ from datakit.evaluation.metrics.track_error import (
     find_center_by_slp,
     great_circle_km,
 )
-from pipelines.evaluation.execution.inputs.babj import read_babj_analyses
 from pipelines.evaluation.protocols import (
     diagnose_track,
     pair_observations,
 )
+from pipelines.evaluation.sources.babj import read_babj_analyses
 from tests.evaluation.helpers.typhoon import (
     GRID_LAT,
     GRID_LON,

@@ -1,21 +1,9 @@
-# -*- coding: utf-8 -*-
-"""BSS 外部气候概率参考数据源（ref/MMDDHH.000）。
-
-对标 ``ref/tiqnqi/xmetai_model_verification/vfc/station_categorical.py::RefProb``：
-
-* 逐 6h 气候概率文件，每行一个站：``站号 p≥0.1 p≥4 p≥13 p≥25``（4 列概率，[0,1]）；
-* 文件名为**北京时**，HH 为 6h 窗口的**结束时刻**；
-* 按验证时刻北京时查表；缺 ref 的站对应行置 NaN（由调用方按 0 兜底）。
-"""
-
-from __future__ import annotations
-
-from typing import Dict
+"""Look up station climatological probabilities for evaluation BSS."""
 
 import numpy as np
 
-from datakit import io
 from datakit.evaluation.errors import ConfigError
+from examples.dataset_io import climatology_station_probability
 
 
 class RefProbabilitySource:
@@ -29,13 +17,14 @@ class RefProbabilitySource:
         self,
         root_dir,
         source_id: str = "ref_probability",
-        description="station_probability",
+        layout=None,
     ):
         self.source_id = source_id
         self.root_dir = str(root_dir)
-        source = io.open(root_dir, description)
-        self._thresholds = list(source.description["thresholds"])
-        self._cache: Dict[str, Dict[int, np.ndarray]] = {}
+        source = climatology_station_probability.open(root_dir, layout=layout)
+        self._layout = source.layout
+        self._thresholds = list(source.layout["thresholds"])
+        self._cache: dict[str, dict[int, np.ndarray]] = {}
         try:
             records = source.discover(all_files=True)
         except FileNotFoundError as exc:
@@ -48,12 +37,23 @@ class RefProbabilitySource:
     def thresholds(self):
         return list(self._thresholds)
 
-    def _load(self, key: str) -> Dict[int, np.ndarray]:
+    def _load(self, key: str) -> dict[int, np.ndarray]:
         if key not in self._cache:
-            a = np.loadtxt(self._index[key], ndmin=2)
-            if a.shape[1] != len(self._thresholds) + 1:
-                raise ConfigError(f"ref {key} 的列数与描述中的阈值不一致")
-            self._cache[key] = {int(sid): a[i, 1:] for i, sid in enumerate(a[:, 0])}
+            try:
+                with climatology_station_probability.open(
+                    self._index[key], layout=self._layout
+                ).read(all_files=True) as dataset:
+                    values = (
+                        dataset.probability.isel(cycle_time=0)
+                        .transpose("station", "threshold")
+                        .values
+                    )
+                    self._cache[key] = {
+                        int(sid): values[i].copy()
+                        for i, sid in enumerate(dataset.station.values)
+                    }
+            except ValueError as exc:
+                raise ConfigError(f"ref {key} 的概率表读取失败: {exc}") from exc
         return self._cache[key]
 
     def probabilities(self, when, station_ids) -> np.ndarray:

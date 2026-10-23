@@ -1,0 +1,35 @@
+"""站点气候概率表：每个文件对应一年中重复的月、日、小时。
+
+    root/
+      010106.000                 1 月 1 日 06 时，北京时间
+      010112.000                 1 月 1 日 12 时
+
+文件无表头，每行五列：站号、P(降水≥0.1)、P(降水≥4)、P(降水≥13)、P(降水≥25)。
+降水阈值为 mm；读取结果为 probability(cycle_time, station, threshold)。
+概率和缺测值原样保留，不裁剪、不换算；cycle_time 不补年份。
+没有变量映射声明，直接读取表中实际列。
+"""
+
+from datakit.io import open_dataset
+from datakit.io.backends import station_tables
+
+DESCRIPTION = {
+    "name": "station_probability",
+    "format": {
+        "encoding": "gbk",
+        "header_lines": 0,
+        "columns": ["station", "p_ge_0.1", "p_ge_4", "p_ge_13", "p_ge_25"],
+    },
+    "layout": {"filename": "{cycle_time:%m%d%H}.000"},
+    "cycle": {"period": "year"},
+    "time_zone": "Asia/Shanghai",
+    "thresholds": [0.1, 4.0, 13.0, 25.0],
+    "example": "010106.000",
+}
+
+
+def open(path, *, selection=None, layout=None):
+    """配置原始概率表访问；layout 可显式覆盖阈值和文件组织。"""
+    return open_dataset(
+        path, DESCRIPTION, selection=selection, layout=layout, backend=station_tables
+    )

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from importlib.resources import files
 from pathlib import Path
 
 import numpy as np
@@ -76,15 +75,7 @@ def load_mapping(value):
         import yaml
 
         candidate = Path(value).expanduser()
-        if candidate.is_file() or candidate.parent != Path("."):
-            content = candidate.read_text(encoding="utf-8")
-        else:
-            name = candidate.stem if candidate.suffix == ".yaml" else str(candidate)
-            content = (
-                files("datakit.io.descriptions")
-                .joinpath(name + ".yaml")
-                .read_text(encoding="utf-8")
-            )
+        content = candidate.read_text(encoding="utf-8")
         value = yaml.safe_load(content)
     if not isinstance(value, Mapping):
         raise TypeError(
@@ -113,14 +104,6 @@ def load_mapping(value):
             "packed_variable and packed_dimension must be specified together"
         )
     return DatasetMapping(variables=variables, **fields)
-
-
-# Single-file climatology only needs these two conventional defaults.
-DAILY_CLIMATOLOGY_MAPPING = DatasetMapping(
-    packed_variable="data", packed_dimension="level"
-)
-DIAMOND_STATION_MAPPING = load_mapping("diamond_station")
-CLIMATOLOGY_MAPPING = load_mapping("cra_climatology")
 
 
 def apply_dataset_mapping(
@@ -198,11 +181,16 @@ def apply_dataset_mapping(
         spec = mapping.spec_for(name)
         if spec is None:
             continue
+        value = dataset[name]
         if spec.scale != 1.0 or spec.offset != 0.0:
-            dataset[name] = dataset[name] * spec.scale + spec.offset
-            dataset[name].attrs["units"] = spec.unit
-            if spec.source_unit:
-                dataset[name].attrs["original_units"] = spec.source_unit
+            value = value * spec.scale + spec.offset
+        attributes = {}
+        if spec.unit != "unknown":
+            attributes["units"] = spec.unit
+        if spec.source_unit:
+            attributes["original_units"] = spec.source_unit
+        # Copy attributes without changing the source variable or loading its data.
+        dataset[name] = value.assign_attrs(attributes)
 
     if mapping.squeeze_dims:
         singleton = [
@@ -227,3 +215,28 @@ def apply_dataset_mapping(
         dataset = dataset.expand_dims(mapping.member_dim)
 
     return dataset
+
+
+def profile_mapping(profile) -> DatasetMapping:
+    return DatasetMapping(
+        variables=profile.variables,
+        coordinate_aliases=profile.coordinate_aliases,
+        packed_variable=profile.packed_variable,
+        packed_dimension=profile.packed_dimension,
+        squeeze_dims=profile.squeeze_dims,
+        transpose_dims=profile.transpose_dims,
+        member_dim=profile.member_dim,
+        ensure_member_dim=profile.ensure_member_dim,
+        case_insensitive=profile.case_insensitive,
+    )
+
+
+def normalize_dataset(dataset, variables, description, *, profile=None):
+    if profile is None and "mapping" not in description:
+        return dataset[list(variables)]
+    mapping = (
+        load_mapping(description["mapping"])
+        if profile is None
+        else profile_mapping(profile)
+    )
+    return apply_dataset_mapping(dataset, mapping, variables)

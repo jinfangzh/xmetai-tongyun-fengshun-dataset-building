@@ -8,13 +8,13 @@
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
-from pipelines.evaluation.execution.inputs.babj import BabjSource, BabjCatalog
 from pipelines.evaluation.protocols import (
     babj_init_times,
     babj_seed_moment,
     sample_leads,
     typhoon_storm_filter,
 )
+from pipelines.evaluation.sources.babj import BabjCatalog, BabjSource
 
 INIT_BJT = datetime(2025, 6, 10, 8, 0)  # 起报北京时（init 00 UTC + 8h）
 

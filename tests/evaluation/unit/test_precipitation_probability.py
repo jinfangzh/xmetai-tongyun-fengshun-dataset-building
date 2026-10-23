@@ -63,7 +63,8 @@ def test_probability_score_is_weighted_and_respects_mask():
     assert result.n_valid == 3
 
 
-def test_probability_external_reference_picks_matching_threshold_column():
+@pytest.mark.parametrize("weights, expected_ref", [(None, 0.375), ([1.0, 2.0, 3.0, 4.0], 0.465)])
+def test_probability_external_reference_picks_matching_threshold_column(weights, expected_ref):
     reference = xr.DataArray(
         [[0.1], [0.2], [0.8], [0.9]],
         dims=("station", "threshold"),
@@ -73,15 +74,14 @@ def test_probability_external_reference_picks_matching_threshold_column():
         _batch(
             [[0, 0, 2, 2], [0, 2, 2, 2]],
             [0, 2, 2, 0],
-            weights=[1.0, 2.0, 3.0, 4.0],
+            weights=weights,
             reference=reference,
         )
     )
-    # 现状：BS_ref 忽略 batch.weights（无权重口径 Σ(p_clim−o)²/N），而 BS 是加权口径，
-    # BSS = 1 − BS/BS_ref 因此分子分母口径不一致；期望的加权值由文件末尾的 skip
-    # 测试钉住（见 test_probability_weighted_reference_uses_matching_weights_pending_source_fix）。
-    expected_ref_unweighted = (0.1**2 + 0.8**2 + 0.2**2 + 0.9**2) / 4
-    assert result.value["rain"]["BS_ref"] == pytest.approx(expected_ref_unweighted)
+    assert result.value["rain"]["BS_ref"] == pytest.approx(expected_ref)
+    assert result.value["rain"]["BSS"] == pytest.approx(
+        1 - result.value["rain"]["BS"] / expected_ref
+    )
 
 
 def test_probability_excludes_nonfinite_members_and_empty_data():
@@ -146,30 +146,78 @@ def test_probability_requirements_request_members_and_reference():
     assert metric.needs_reference()
 
 
-# 下面两条钉住已缺失/口径不一致的行为；源码解冻修好后，把它们从 skip 改回正常测试、
-# 删掉对应标记，并把上面的原地断言恢复成期望值。
-@pytest.mark.skip(
-    reason=(
-        "源码冻结暂不修：BS_ref 现在恒用无权重口径 Σ(p_clim−o)²/N，而 BS（直方图）在有 batch.weights "
-        "时是加权口径，BSS = 1 − BS/BS_ref 因此分子分母口径不一致"
-    ),
-)
-def test_probability_weighted_reference_uses_matching_weights_pending_source_fix():
+def test_probability_identical_forecast_and_reference_have_zero_skill():
+    reference = xr.DataArray(
+        [[0.0], [0.0]], dims=("station", "threshold"), coords={"threshold": [1.0]}
+    )
+    result = EnsembleProbabilityScore(THRESHOLDS).compute(
+        _batch([[0, 0], [0, 0]], [0, 2], weights=[0.9, 0.1], reference=reference)
+    )
+    score = result.value["rain"]
+    assert score["BS"] == pytest.approx(0.1)
+    assert score["BS_ref"] == pytest.approx(0.1)
+    assert score["BSS"] == pytest.approx(0.0)
+
+
+def test_probability_weighted_reference_merge_matches_whole_batch():
     reference = xr.DataArray(
         [[0.1], [0.2], [0.8], [0.9]],
         dims=("station", "threshold"),
         coords={"threshold": [1.0]},
     )
-    result = EnsembleProbabilityScore(THRESHOLDS).compute(
+    metric = EnsembleProbabilityScore(THRESHOLDS)
+    whole = metric.compute(
         _batch(
             [[0, 0, 2, 2], [0, 2, 2, 2]],
             [0, 2, 2, 0],
-            weights=[1.0, 2.0, 3.0, 4.0],
+            weights=[0.1, 0.2, 0.3, 0.4],
             reference=reference,
         )
     )
-    expected_ref = (1 * 0.1**2 + 2 * 0.8**2 + 3 * 0.2**2 + 4 * 0.9**2) / 10
-    assert result.value["rain"]["BS_ref"] == pytest.approx(expected_ref)
+    merged = metric.finalize(
+        metric.merge(
+            [
+                metric.accumulate(
+                    _batch(
+                        [[0, 0], [0, 2]],
+                        [0, 2],
+                        weights=[0.1, 0.2],
+                        reference=reference.isel(station=slice(0, 2)),
+                    )
+                ),
+                metric.accumulate(
+                    _batch(
+                        [[2, 2], [2, 2]],
+                        [2, 0],
+                        weights=[0.3, 0.4],
+                        reference=reference.isel(station=slice(2, 4)),
+                    )
+                ),
+            ]
+        )
+    )
+    assert whole.value["rain"]["BS_ref"] == pytest.approx(0.465)
+    for key in ("AROC", "BS", "BS_ref", "BSS", "base_rate"):
+        assert merged.value["rain"][key] == pytest.approx(whole.value["rain"][key])
+
+
+def test_probability_reference_uses_same_mask_and_finite_samples_as_forecast():
+    reference = xr.DataArray(
+        [[0.0], [0.5], [1.0], [1.0]],
+        dims=("station", "threshold"),
+        coords={"threshold": [1.0]},
+    )
+    result = EnsembleProbabilityScore(THRESHOLDS).compute(
+        _batch(
+            [[0, 2, np.nan, 2], [0, 2, 2, 2]],
+            [0, 2, 0, 0],
+            valid_mask=[True, True, True, False],
+            weights=[0.2, 0.8, 100.0, 100.0],
+            reference=reference,
+        )
+    )
+    assert result.n_valid == 2
+    assert result.value["rain"]["BS_ref"] == pytest.approx(0.2)
 
 
 @pytest.mark.skip(

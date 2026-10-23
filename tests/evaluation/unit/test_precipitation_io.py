@@ -15,11 +15,11 @@ import pytest
 
 from datakit.evaluation.contracts import DataIndex, DataKind, DataRequest
 from datakit.evaluation.errors import DecodeError, DiscoveryError
-from pipelines.evaluation.execution.sources import (
+from datakit.io.backends.station_tables import parse_station_file_time
+from pipelines.evaluation.sources import (
     DiamondStationCatalog,
     DiamondStationReader,
     load_station_whitelist,
-    parse_station_file_time,
 )
 
 T0 = datetime(2025, 8, 20, 0, 0)

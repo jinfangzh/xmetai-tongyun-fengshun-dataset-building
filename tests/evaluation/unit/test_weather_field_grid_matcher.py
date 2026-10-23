@@ -13,7 +13,8 @@ from datakit.evaluation.contracts import (
     SemanticMetadata,
 )
 from datakit.evaluation.errors import AlignmentError
-from datakit.evaluation.matching import (
+from datakit.schema.semantics import DataKind, TemporalKind
+from pipelines.evaluation.matching import (
     Matcher,
     add_derived_variables,
     align_lon_to,
@@ -21,7 +22,6 @@ from datakit.evaluation.matching import (
     narrow_batch,
     restrict_to_latitude_band,
 )
-from datakit.schema.semantics import DataKind, TemporalKind
 
 
 def _grid_dataset(lat, lon, values=None, name="z500") -> xr.Dataset:

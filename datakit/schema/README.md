@@ -5,6 +5,10 @@
 `schema` 保存跨格式共享的气象维度和变量元数据。它不进行数据转换；雷达专属网格
 定义放在 `radar.schema`，避免通用 schema 被领域常量污染。
 
+具体数据集的可选变量映射位于 `examples.dataset_io`；
+评估角色、报告单位和分组约定位于 `pipelines.evaluation.execution`。
+这里保留通用 `DatasetMapping`、`VarSpec` 和映射加载/执行工具。
+
 ## 2. 模块与功能
 
 - `dimensions.py`：维度别名和常用气压层集合。

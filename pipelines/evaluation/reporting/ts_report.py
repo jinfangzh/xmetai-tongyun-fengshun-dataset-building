@@ -36,7 +36,6 @@ POD / FAR 和 TS 是恒等式关系，不能各占一根轴。
 
 from __future__ import annotations
 
-
 import argparse
 from datetime import datetime
 from pathlib import Path
@@ -45,7 +44,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from ._metadata import region_display, split_regions
+from ._metadata import region_display, source_of, split_regions
 from .radar import radar_scores
 
 #: 第五节（跨时效分布）里逐字固定的三行。``assets/templates/weather_ts_single.md`` 的骨架要抄同一份字节，
@@ -300,7 +299,7 @@ def diagnose(summary: Dict[str, object]) -> List[str]:
 
 
 def _grade_table(grades: Sequence[Dict[str, object]]) -> str:
-    """（见 _source_of 与表格生成）"""
+    """（见 source_of 与表格生成）"""
     header = (
         "| 降水等级 | 阈值(mm) | TS | POD | FAR | 漏报率 | BIAS "
         "| TS(等权平均) | 命中 | 漏报 | 空报 | 样本合计 |"
@@ -327,13 +326,6 @@ def _ts_mark(value: float) -> str:
     if value >= 0.2:
         return "🟡"
     return "🔴"
-
-
-def _source_of(sources: Optional[Dict[str, str]], name: str) -> str:
-    """报告头里的来源标注：给了文件路径就写路径，否则如实写"未提供"。"""
-    if sources and sources.get(name):
-        return f"`{sources[name]}`"
-    return "未提供（调用方应在 sources 里给出文件路径）"
 
 
 def _coverage_sentence(coverage: Optional[Dict[str, int]]) -> str:
@@ -1997,7 +1989,7 @@ def build_ts_report(
     if comparisons:
         contrast = (
             "对比对象为"
-            + "、".join(f"{name}（来源：{_source_of(sources, name)}）" for name in comparisons)
+            + "、".join(f"{name}（来源：{source_of(sources, name)}）" for name in comparisons)
             + ("——各者应使用同一时段" if len(comparisons) > 1 else "——两者应使用同一时段")
             + "、同一站点集、同一窗口与阈值口径，"
             "若来源文件的口径不同，结论不可直接横向比较。"
@@ -2008,7 +2000,7 @@ def build_ts_report(
     lines.append("## 一、结论摘要")
     lines.append("")
     lines.append(
-        f"本报告评估{model_name}（来源：{_source_of(sources, model_name)}），"
+        f"本报告评估{model_name}（来源：{source_of(sources, model_name)}），"
         + (f"集合每例{int(members)}个成员，" if (ensemble and members) else "")
         + contrast
         + _coverage_sentence(coverage)

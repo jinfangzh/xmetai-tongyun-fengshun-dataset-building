@@ -28,11 +28,13 @@ pipelines/
 ├── dataset/        # 数据集制作、检查和导出流程
 └── evaluation/     # 评测流程、执行策略、结果报告和入口
 examples/
+├── dataset_io/          # 按数据类型命名，说明文件组织与可选变量映射
 └── evaluation/configs/  # Fengqing 等具体评测配置
 ```
 
 基础模块处理单一职责。`pipelines` 组合基础模块，`examples` 指定具体数据与
-运行参数。依赖方向是 `examples → pipelines → datakit`。CDS 与 Copernicus Marine 下载配置位于 `examples/dataset_downloader/`，
+运行参数。数据集接入约定集中在 `examples/dataset_io/`，现有评估入口复用这些默认约定；
+`datakit` 核心模块不依赖 `examples` 或 `pipelines`。CDS 与 Copernicus Marine 下载配置位于 `examples/dataset_downloader/`，
 按各自 README 安装独立依赖。
 
 `datakit.evaluation.contracts` 定义评测数据结构，`errors` 定义错误类型，
@@ -158,7 +160,7 @@ print(dataset)
 | 读取或写入 NetCDF、GRIB、NumPy、Zarr | `datakit.io` |
 | 规范坐标、变量名、单位和归一化 | `datakit.transforms` |
 | 裁剪、插值和重采样 | `datakit.transforms` |
-| 计算均值、标准差、分位数和气候态 | `pipelines.dataset` |
+| 计算均值、标准差、分位数和分组统计 | xarray 的归约与分组方法 |
 | 检查 schema、缺测、时间连续性和数值范围 | `datakit.validation` |
 | 制作可复用 Zarr 数据集产物 | `pipelines.dataset` |
 | 处理 CINRAD 或 MeteoNet 雷达数据 | `datakit.radar` |
@@ -201,50 +203,26 @@ std = data.std(dim=("time", "lat", "lon"), skipna=True)
 `pipelines.dataset` 提供路径级、产物级函数：
 
 ```python
-from pipelines.dataset import (
-    build_normalization_statistics,
-    check_zarr_range,
-    convert_to_zarr,
-)
+from pipelines.dataset import convert_to_zarr
 
 convert_to_zarr(
     "input.nc",
     "dataset.zarr",
     chunks={"time": 1, "lat": 256, "lon": 256},
 )
-build_normalization_statistics(data, "statistics")
-report = check_zarr_range("dataset.zarr", variable="data", axis="level")
-```
-
-雷达和集合数据集制备也通过同一入口提供：
-
-```python
-from pipelines.dataset import (
-    convert_cinrad_to_zarr,
-    convert_ensemble_netcdf_to_zarr,
-)
 ```
 
 ## 示例
 
-`examples/` 提供可直接阅读和运行的最小示例，覆盖本地 I/O、xarray 处理、统计、
-Zarr 数据集转换、雷达质量控制和可视化。完整清单和依赖说明见
+`examples/` 提供数据集接入、制作、处理、校验和评测脚本。目录和依赖说明见
 [examples/README.md](examples/README.md)。
 
 ```bash
-python examples/io_local.py
-python examples/process_xarray.py
-python examples/statistics_summary.py
-python examples/radar_quality.py
+python examples/dataset_building/era5_nc_to_zarr.py --help
+python examples/dataset_processing/era5_zarr_to_nc.py --help
 ```
 
-Zarr 示例使用项目的基础依赖；绘图示例还需要安装 `visualization` extra：
-
-```bash
-python examples/convert_to_zarr.py
-pip install -e '.[visualization]'
-python examples/visualize.py
-```
+运行脚本时需指定实际数据路径，并安装相应的可选 I/O 依赖。
 
 ## 命令行边界
 

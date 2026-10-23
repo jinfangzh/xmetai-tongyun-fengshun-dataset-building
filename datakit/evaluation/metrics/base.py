@@ -7,9 +7,10 @@ requirements / validate / accumulate / merge / finalize
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
 from enum import Enum
+from typing import Any, Dict, List, Optional
 
+import numpy as np
 import xarray as xr
 
 from datakit.evaluation.contracts import (
@@ -241,6 +242,20 @@ def single_variable(data: Any, side: str) -> xr.DataArray:
             '{"rmse": {"variables": ["z500", "t2m"]}}'
         )
     return data[names[0]]
+
+
+def field_values(data: Any) -> np.ndarray:
+    """Extract float64 values from a field, single-variable Dataset or bundle."""
+    if isinstance(data, xr.DataArray):
+        return np.asarray(data.values, dtype="f8")
+    if isinstance(data, xr.Dataset):
+        return np.asarray(single_variable(data, "输入").values, dtype="f8")
+    if hasattr(data, "payload"):
+        payload = data.payload
+        if isinstance(payload, xr.Dataset):
+            payload = single_variable(payload, "输入")
+        return np.asarray(payload.values, dtype="f8")
+    return np.asarray(data, dtype="f8")
 
 
 def field_unit(*sources: Any) -> str:

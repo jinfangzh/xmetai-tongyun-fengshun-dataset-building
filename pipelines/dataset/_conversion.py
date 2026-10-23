@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import shutil
 from collections.abc import Mapping, Sequence
-from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,8 +16,6 @@ from datakit.schema import channel_attributes
 from datakit.transforms import (
     denormalize_xarray,
     enrich_dataset_attrs,
-    normalize_xarray,
-    preprocess_channel_units,
 )
 
 
@@ -275,6 +271,29 @@ def convert_to_zarr(
             opened.close()
 
 
+def _align_channel_statistic(
+    value: xr.DataArray, name: str, channels: Sequence[Any]
+) -> xr.DataArray:
+    """Align labeled statistics by channel; unlabeled arrays use positional order."""
+    if value.dims != ("channel",):
+        raise ValueError(f"{name} must be one-dimensional along channel")
+    channels = list(channels)
+    if "channel" in value.coords:
+        if value.channel.dtype.kind == "S":
+            value = value.assign_coords(channel=value.channel.astype(str))
+        if not value.get_index("channel").is_unique:
+            raise ValueError(f"{name} channel labels must be unique")
+        missing = [
+            channel for channel in channels if channel not in value.get_index("channel")
+        ]
+        if missing:
+            raise ValueError(f"{name} missing requested channels: {missing}")
+        return value.sel(channel=channels).load()
+    if value.sizes["channel"] != len(channels):
+        raise ValueError(f"{name} length does not match data channels")
+    return value.assign_coords(channel=channels).load()
+
+
 def _load_channel_statistic(
     directory: str | Path,
     name: str,
@@ -293,7 +312,7 @@ def _load_channel_statistic(
     root = Path(directory).expanduser()
     netcdf_path = root / f"{name}.nc"
     numpy_path = root / f"{name}.npy"
-    zarr_values = None
+    value = None
     candidate = root / name
     if candidate.exists() and any(
         (root / marker).is_file() for marker in (".zgroup", "zarr.json")
@@ -303,12 +322,23 @@ def _load_channel_statistic(
         node = zarr.open(str(candidate), mode="r")
         if isinstance(node, zarr.Group):
             keys = list(node.array_keys())
-            node = node[keys[0]] if keys else None
-        if node is not None:
-            zarr_values = np.asarray(node[...]).reshape(-1)
-    if zarr_values is not None:
-        value = xr.DataArray(zarr_values, dims=("channel",))
-    elif netcdf_path.is_file():
+            if len(keys) != 1:
+                raise ValueError(
+                    f"Statistic {candidate} must contain exactly one array"
+                )
+            node = node[keys[0]]
+        coords = None
+        for dimension in ("channel", "level"):
+            coordinate = root / dimension
+            if coordinate.exists():
+                coords = {
+                    "channel": np.asarray(zarr.open(str(coordinate), mode="r")[...])
+                }
+                break
+        value = xr.DataArray(np.asarray(node[...]), dims=("channel",), coords=coords)
+    if value is not None:
+        return _align_channel_statistic(value, name, channels)
+    if netcdf_path.is_file():
         opened = dataset_io.open(netcdf_path).read(load=True)
         try:
             if isinstance(opened, xr.Dataset):
@@ -337,9 +367,7 @@ def _load_channel_statistic(
             f"Zarr statistic '{name}' in {root}, {netcdf_path}, or {numpy_path}"
         )
 
-    if value.sizes["channel"] != len(channels):
-        raise ValueError(f"{name} length does not match data channels")
-    return value.assign_coords(channel=list(channels))
+    return _align_channel_statistic(value, name, channels)
 
 
 def _load_channel_statistic_from_dataset(
@@ -354,233 +382,7 @@ def _load_channel_statistic_from_dataset(
         value = value.rename({"level": "channel"})
     if "channel" not in value.dims:
         return None
-    selected = value.sel(channel=list(channels)).load()
-    if selected.sizes["channel"] != len(channels):
-        raise ValueError(f"{name} length does not match data channels")
-    return selected
-
-
-def _parse_day_from_name(path: Path) -> date:
-    return datetime.strptime(path.stem, "%Y%m%d").date()
-
-
-def _parse_day(value: str | date | datetime | None) -> date | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    text = str(value).strip()
-    if not text:
-        return None
-    if "-" in text:
-        return date.fromisoformat(text)
-    return datetime.strptime(text, "%Y%m%d").date()
-
-
-def _in_day_range(path: Path, start_day: date | None, end_day: date | None) -> bool:
-    current = _parse_day_from_name(path)
-    if start_day is not None and current < start_day:
-        return False
-    if end_day is not None and current > end_day:
-        return False
-    return True
-
-
-def _load_channel_stat_array(path: str | Path, variable: str) -> xr.DataArray:
-    opened = dataset_io.open(path).read(load=True)
-    try:
-        if isinstance(opened, xr.DataArray):
-            value = opened
-        else:
-            if variable not in opened:
-                raise KeyError(f"{variable!r} not found in {path}")
-            value = opened[variable]
-        if "channel" not in value.dims:
-            raise ValueError(f"{path} must contain a 'channel' dimension")
-        return value.load().astype("float32")
-    finally:
-        if hasattr(opened, "close"):
-            opened.close()
-
-
-def _load_any_array(path: str | Path, variable: str) -> xr.DataArray:
-    opened = dataset_io.open(path).read(load=True)
-    try:
-        if isinstance(opened, xr.DataArray):
-            value = opened
-        else:
-            if variable not in opened:
-                raise KeyError(f"{variable!r} not found in {path}")
-            value = opened[variable]
-        return value.load()
-    finally:
-        if hasattr(opened, "close"):
-            opened.close()
-
-
-def convert_daily_netcdf_to_normalized_zarr(
-    source_dir: str | Path,
-    destination: str | Path,
-    *,
-    mean_nc: str | Path,
-    std_nc: str | Path,
-    mask_nc: str | Path,
-    variable: str = "data",
-    start_date: str | date | datetime | None = None,
-    end_date: str | date | datetime | None = None,
-    levels: Sequence[str] | None = None,
-    accumulation_hours: float = 24.0,
-    chunks: Mapping[str, int] | None = None,
-    consolidated: bool | None = True,
-    mode: str = "w",
-    dataset_attrs: Mapping[str, Any] | None = None,
-    include_channel_attributes: bool = True,
-    tp_zscore: bool = True,
-    add_geospatial_ranges: bool = True,
-    lat_coord_names: Sequence[str] = ("lat", "latitude"),
-    lon_coord_names: Sequence[str] = ("lon", "longitude"),
-    overwrite: bool = False,
-) -> dict[str, object]:
-    """Convert daily NetCDF files into one normalized Zarr dataset.
-
-    This workflow pipeline performs date filtering, per-file channel unit
-    preprocessing, channel-wise normalization, concatenation, and final Zarr
-    writing with sidecar statistics arrays.
-    """
-
-    source = Path(source_dir).expanduser()
-    if not source.exists() or not source.is_dir():
-        raise FileNotFoundError(f"Source directory not found: {source}")
-
-    start_day = _parse_day(start_date)
-    end_day = _parse_day(end_date)
-    if start_day is not None and end_day is not None and start_day > end_day:
-        raise ValueError("start_date cannot be greater than end_date")
-
-    selected_levels = [item.strip() for item in (levels or []) if item and item.strip()]
-    nc_files = sorted(
-        path for path in source.glob("*.nc") if _in_day_range(path, start_day, end_day)
-    )
-    if not nc_files:
-        raise FileNotFoundError(f"No NetCDF files found in {source}")
-
-    target = Path(destination).expanduser()
-    if target.exists():
-        if not overwrite:
-            raise FileExistsError(target)
-        if target.is_dir():
-            shutil.rmtree(target)
-        else:
-            target.unlink()
-    target.parent.mkdir(parents=True, exist_ok=True)
-
-    mean = _load_channel_stat_array(mean_nc, "mean")
-    std = _load_channel_stat_array(std_nc, "std")
-    mask = _load_any_array(mask_nc, "mask")
-
-    datasets: list[xr.Dataset] = []
-    for path in nc_files:
-        opened = dataset_io.open(path).read(load=True)
-        try:
-            dataset = (
-                opened
-                if isinstance(opened, xr.Dataset)
-                else opened.to_dataset(name=opened.name or variable)
-            )
-            if variable not in dataset:
-                raise KeyError(f"{path} does not contain variable {variable!r}")
-
-            data = dataset[variable].astype("float32")
-            data = preprocess_channel_units(
-                data,
-                channel_dim="channel",
-                accumulation_hours=float(accumulation_hours),
-            ).astype("float32")
-
-            if selected_levels:
-                available_channels = [
-                    str(name) for name in data.channel.values.tolist()
-                ]
-                missing = [
-                    name for name in selected_levels if name not in available_channels
-                ]
-                if missing:
-                    raise KeyError(f"{path} missing requested levels: {missing}")
-                data = data.sel(channel=selected_levels)
-
-            mean_sel = mean.sel(channel=data.channel)
-            std_sel = std.sel(channel=data.channel)
-            data = normalize_xarray(
-                data,
-                mean_sel,
-                std_sel + 1e-12,
-                channel_dim="channel",
-                log_channels=(),
-                log_clip=(0.0, 1000.0),
-            ).astype("float32")
-
-            day_dataset = data.to_dataset(name=variable)
-            if "time" in day_dataset.coords and "time" not in day_dataset.dims:
-                day_dataset = day_dataset.expand_dims(
-                    time=[pd.Timestamp(day_dataset.time.values)]
-                )
-            elif "time" not in day_dataset.dims:
-                day_dataset = day_dataset.expand_dims(
-                    time=[pd.Timestamp(_parse_day_from_name(path))]
-                )
-
-            datasets.append(day_dataset.load())
-        finally:
-            if hasattr(opened, "close"):
-                opened.close()
-
-    combined = xr.concat(datasets, dim="time")
-    combined[variable] = combined[variable].astype("float16")
-    channels = [str(name) for name in combined[variable].channel.values.tolist()]
-
-    merged_attrs = dict(dataset_attrs or {})
-
-    sidecars: dict[str, xr.DataArray] = {"mean": mean, "std": std, "mask": mask}
-
-    written = convert_to_zarr(
-        combined,
-        target,
-        chunks=chunks or {"time": 1},
-        consolidated=consolidated,
-        mode=mode,
-        sidecars=sidecars,
-        dataset_attrs=merged_attrs,
-        include_channel_attributes=include_channel_attributes,
-        channel_accumulation_hours=float(accumulation_hours),
-        add_geospatial_ranges=add_geospatial_ranges,
-        lat_coord_names=lat_coord_names,
-        lon_coord_names=lon_coord_names,
-    )
-
-    times = pd.DatetimeIndex(combined.time.values)
-    result: dict[str, object] = {
-        "input": {
-            "source_dir": str(source),
-            "start_date": start_day.isoformat() if start_day is not None else None,
-            "end_date": end_day.isoformat() if end_day is not None else None,
-            "variable": variable,
-            "accumulation_hours": float(accumulation_hours),
-            "levels": selected_levels,
-        },
-        "output": {
-            "zarr_path": str(written),
-            "file_count": len(nc_files),
-            "time_start": times.min().isoformat(),
-            "time_end": times.max().isoformat(),
-            "channel_count": len(channels),
-            "channels": channels,
-            "sidecar_names": sorted(sidecars.keys()),
-        },
-        "status": "passed",
-    }
-    return result
+    return _align_channel_statistic(value, name, channels)
 
 
 def extract_zarr_to_netcdf(

@@ -3,8 +3,8 @@
 ## 1. 定位与边界
 
 `validation` 对内存中的 xarray 对象执行 schema、时间完整性、无效值和数值范围
-检查。它不负责打开数据文件；Zarr 路径级检查由
-`pipelines.dataset.check_zarr_range` 组织。
+检查。使用 `datakit.io` 打开数据后，可直接调用 `analyze_range()`；
+标准数据集的路径级校验由 `pipelines.dataset.validate_standard_dataset` 组织。
 
 ## 2. 模块与功能
 

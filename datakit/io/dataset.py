@@ -1,4 +1,4 @@
-"""Uniform access to datasets described by packaged or external YAML files."""
+"""Uniform raw dataset access through explicit file layouts and shared backends."""
 
 from __future__ import annotations
 
@@ -9,16 +9,16 @@ from typing import Any
 
 import xarray as xr
 
-from ._description import load_description, templates
-from .backends import implementation
+from ._layout import get_layout, load_layout, profile_layout, templates
+from .backends import file_collection, files
 from .backends.file_collection import discover
 from .backends.files import as_dataset, local_path
 
 
 class _DatasetAccess:
-    """Bind a root and structural description; construction performs no data IO.
+    """Bind a root and structural layout; construction performs no data IO.
 
-    ``read`` returns a closeable Dataset. Array collections default to Dask-backed
+    ``read`` returns a closeable Dataset. Multi-file arrays default to Dask-backed
     access (install the ``parallel`` extra); text tables are eager. Call close()
     or use ``with source.read() as ds``. No physical transforms are performed.
     """
@@ -26,32 +26,36 @@ class _DatasetAccess:
     def __init__(
         self,
         path: str | Path,
-        description: str | Path | Mapping[str, Any] | None = None,
+        layout: str | Path | Mapping[str, Any] | None = None,
         *,
         selection: Mapping[str, Any] | None = None,
+        backend=None,
     ):
         self.path = local_path(path)
         self.selection = dict(selection or {})
-        self.description = (
-            load_description(description)
-            if description is not None
+        self.layout = (
+            load_layout(layout)
+            if layout is not None
             else {
                 "name": "xarray_dataset",
-                "implementation": "xarray_dataset",
                 "layout": {},
             }
         )
-        self._implementation = implementation(self.description["implementation"])
+        self._backend = (
+            backend
+            if backend is not None
+            else (file_collection if self.layout["layout"] else files)
+        )
 
     def _records(self, selection, all_files):
         selection = {**self.selection, **(selection or {})}
-        if self.description["layout"] and not selection and not all_files:
+        if self.layout["layout"] and not selection and not all_files:
             raise ValueError(
                 "Provide selection for a described dataset, or explicitly use all_files=True"
             )
         # Path fields narrow discovery; remaining coordinates are selected by Xarray.
         path_fields = {}
-        for _, template in templates(self.description):
+        for _, template in templates(self.layout):
             for field, spec, _ in template.fields:
                 value = selection.get(field)
                 if value is None or isinstance(value, slice):
@@ -70,7 +74,7 @@ class _DatasetAccess:
                     ]
                 path_fields[field] = values
         if "lead_time" in selection and "lead_index" not in path_fields:
-            step = self.description.get("lead_time", {}).get("hours_per_index")
+            step = self.layout.get("lead_time", {}).get("hours_per_index")
             value = selection["lead_time"]
             if step and not isinstance(value, slice):
                 values = value if isinstance(value, (list, tuple)) else [value]
@@ -81,7 +85,7 @@ class _DatasetAccess:
                         "lead_time must match the layout's hours_per_index"
                     )
                 path_fields["lead_index"] = [int(float(item) / step) for item in values]
-        return discover(self.path, self.description, path_fields=path_fields), selection
+        return discover(self.path, self.layout, path_fields=path_fields), selection
 
     def discover(self, *, selection=None, all_files=False):
         """Return matching file records without opening data files."""
@@ -98,9 +102,7 @@ class _DatasetAccess:
         collections require selection or explicit all_files=True.
         """
         records, selection = self._records(selection, all_files)
-        dataset = self._implementation.read_records(
-            records, self.description, **open_options
-        )
+        dataset = self._backend.read_records(records, self.layout, **open_options)
         try:
             selected = dataset.sel(selection) if selection else dataset
             if selected is not dataset:
@@ -117,9 +119,7 @@ class _DatasetAccess:
         if not isinstance(dataset, (xr.Dataset, xr.DataArray)):
             raise TypeError("write requires an xarray.Dataset or DataArray")
         dataset = as_dataset(dataset)
-        return self._implementation.write(
-            dataset, self.path, self.description, **write_options
-        )
+        return self._backend.write(dataset, self.path, self.layout, **write_options)
 
     def iter_datasets(self, *, selection=None, all_files=False, **open_options):
         """Visit one physical file at a time; each context closes before advancing.
@@ -129,8 +129,8 @@ class _DatasetAccess:
         """
         records, selection = self._records(selection, all_files)
         for record in records:
-            with self._implementation.read_records(
-                [record], self.description, **open_options
+            with self._backend.read_records(
+                [record], self.layout, **open_options
             ) as ds:
                 # A partition may contain no requested internal labels.
                 indexers = {}
@@ -149,15 +149,28 @@ class _DatasetAccess:
 
 def open(
     path: str | Path,
-    description: str | Path | Mapping[str, Any] | None = None,
+    layout: str | Path | Mapping[str, Any] | None = None,
     *,
     selection: Mapping[str, Any] | None = None,
+    backend=None,
 ) -> _DatasetAccess:
     """Configure dataset access without discovering or opening data files.
 
     Call read() or iter_datasets() on the returned object to access data.
+    ``layout`` is an explicit mapping or YAML path, never a dataset name.
+    Specialized callers may supply a backend with read_records() and write().
     """
-    return _DatasetAccess(path, description, selection=selection)
+    return _DatasetAccess(path, layout, selection=selection, backend=backend)
 
 
-__all__ = ["open"]
+__all__ = ["open", "open_dataset"]
+
+
+def open_dataset(
+    path, description, *, selection=None, profile=None, layout=None, backend=None
+):
+    if layout is not None and profile is not None:
+        raise ValueError("Pass layout or profile, not both")
+    if layout is None:
+        layout = get_layout(description) if profile is None else profile_layout(profile)
+    return open(path, layout, selection=selection, backend=backend)
