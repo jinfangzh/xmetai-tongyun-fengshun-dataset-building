@@ -1,0 +1,120 @@
+# ORAS5 c88 / 0.25° / 24小时 标准数据集定义。
+
+# 第一部分：数据集标识、坐标、存储格式及校验要求。
+meta_info:
+  name: ORAS5 c88 / 0.25° / 24小时
+  dataset_id: oras5.c88.p25.h24  # 产品与变体的配置标识。
+  expected_root_dataset_id: oras5.1993_2024.c88.p25.h24.v1
+  product: {id: oras5.c88, version: '1.0', variant: p25.h24}
+  schema_version: '2.0'
+  status: approved
+  template_version: v1  # 本套模板规则的版本。
+  dataset_path: /workspace/data/zarr_refresh_v3/oras5.1993_2024.c88.p25.h24.v1
+  auxiliary_directory: /workspace/data/zarr_refresh_v3/oras5.1993_2024.c88.p25.h24.v1
+  dataset_version: v3  # 数据内容版本标识。
+  storage_format: {name: zarr, version: 3, allow_nested_groups: false}  # version表示Zarr存储格式版本。
+  data_revision: '20260923'  # 数据修订标识。
+  validation_scope: confirmed-format  # 校验范围标识。
+
+  time_coverage:
+    first: '1993-01-01T00:00:00.000000000'
+    last: '2024-12-31T00:00:00.000000000'
+    time_count: 11688
+    time_resolution: {value: 24, unit: hour}
+    timezone: UTC
+
+  grid:
+    space_resolution: 0.25  # 水平网格间隔，单位见coordinate_units。
+    coordinate_units: degree
+    latitude: {first: 90.0, last: -90.0, count: 721, direction: north-to-south}
+    longitude: {first: 0.0, last: 359.75, count: 1440, direction: west-to-east}
+
+  depth_below_sea_surface:
+    variables: [os, ot, ou, ov]
+    units: m
+    channel_name_template: '{variable}{level_code}'
+    level_codes: {'50': 0.5, '266': 2.66, '514': 5.14, '809': 8.09, '1177': 11.77, '1652': 16.52, '2275': 22.75, '3087': 30.87, '4118': 41.18, '5385': 53.85, '6902': 69.02, '8692': 86.92, '10803': 108.03, '13307': 133.07, '16316': 163.16, '19978': 199.78, '22114': 221.14, '27135': 271.35, '33386': 333.86, '41179': 411.79, '50863': 508.63}  # 深度标签到物理深度的映射，深度单位见units。
+
+  channels: [os50, os266, os514, os809, os1177, os1652, os2275, os3087, os4118, os5385, os6902, os8692,  # 完整88通道的唯一顺序。
+    os10803, os13307, os16316, os19978, os22114, os27135, os33386, os41179, os50863, ot50, ot266, ot514,
+    ot809, ot1177, ot1652, ot2275, ot3087, ot4118, ot5385, ot6902, ot8692, ot10803, ot13307, ot16316, ot19978,
+    ot22114, ot27135, ot33386, ot41179, ot50863, ou50, ou266, ou514, ou809, ou1177, ou1652, ou2275, ou3087,
+    ou4118, ou5385, ou6902, ou8692, ou10803, ou13307, ou16316, ou19978, ou22114, ou27135, ou33386, ou41179,
+    ou50863, ov50, ov266, ov514, ov809, ov1177, ov1652, ov2275, ov3087, ov4118, ov5385, ov6902, ov8692,
+    ov10803, ov13307, ov16316, ov19978, ov22114, ov27135, ov33386, ov41179, ov50863, sit, ssh, sic, mlt]
+
+  arrays:
+    data: {dimensions: [time, channel, lat, lon], dtype: float16, chunks: {time: 1, channel: full, lat: full, lon: full}}  # full表示对应维度的完整长度。
+    time: {dimensions: [time], dtype: 'datetime64[ns]'}  # 时间值精度为纳秒。
+    channel: {dimensions: [channel], dtype: string}
+    lat: {dimensions: [lat], dtype: float32}
+    lon: {dimensions: [lon], dtype: float32}
+    mean: {dimensions: [channel], dtype: float32}
+    std: {dimensions: [channel], dtype: float32}
+    mask: {dimensions: [mask_channel, lat, lon], dtype: uint8}
+    mask_channel: {dimensions: [mask_channel], dtype: string}
+
+  mask:
+    channels: [land_mask, sea_mask]
+    allowed_values: [0, 1]
+    valid_value: 1  # 1表示属于该通道标识的区域。
+    complement_sum: 1  # 逐网格点要求陆地掩膜与海洋掩膜之和为1。
+
+  metadata:
+    data_attributes:  # data数组的属性要求。
+      data_representation: normalized  # 主数组的数值表示类型。
+      normalization_method: channel_dependent  # 处理流程按通道定义，步骤见variable_metadata。
+      mean_variable: mean  # 有效偏移参数数组，顺序与channels一致。
+      std_variable: std  # 有效缩放参数数组，顺序与channels一致。
+      scale_factor_location: channel.channel_info[*].scale_factor  # channel属性中各通道缩放参数的位置声明。
+      add_offset_location: channel.channel_info[*].add_offset  # channel属性中各通道偏移参数的位置声明。
+      inverse_transform: preprocessed_value = data * scale_factor + add_offset  # 存储值到预处理值的恢复公式声明。
+
+    channel_metadata:  # channel数组的逐通道属性要求。
+      attribute: channel_info  # 逐通道属性字典名称。
+      version_attribute: channel_info_schema_version  # 逐通道属性字典的结构版本字段。
+      version: '1.0'  # channel_info的结构版本。
+      require_exact_channels: true  # 键集合必须与完整channels清单一致。
+      long_name_required: true  # 逐通道说明不能为空。
+      scale_factor_from: std  # 与std中对应通道的数值一致。
+      add_offset_from: mean  # 与mean中对应通道的数值一致。
+      scale_offset_formula: preprocessed_value = normalized_value * scale_factor + add_offset  # 逐通道参数的恢复公式声明。
+
+  normalization:
+    statistics: {mean_finite: true, std_finite: true, std_positive: true}  # mean和std均须为有限值，且std严格大于0。
+
+  auxiliaries:
+    check_variable_names: false  # NetCDF内部数据变量名不纳入约束。
+    unregistered_file_status: warning  # 未登记附件仅报告警告。
+    files:  # 文件名相对于auxiliary_directory。
+      const.nc:
+        format: netcdf
+        role: const
+        required: true
+        dimensions: [channel, lat, lon]
+        dtype: float32
+        grid: main_data  # 空间坐标的数值、长度及顺序须与主网格一致。
+        finite: true  # 所有数值均须为有限值。
+        channels: [geo, lsm, coslat, sinlat, coslon, sinlon]  # 附件自身的完整通道顺序。
+      weight.nc:
+        format: netcdf
+        role: weight
+        required: true
+        dimensions: [lat]
+        dtype: float32
+        grid: main_data  # 纬度坐标的数值、长度及顺序须与主网格一致。
+        finite: true  # 所有数值均须为有限值。
+        nonnegative_atol: 1.0e-07  # 容差内的微小负值仍记录警告。
+        require_positive_value: true  # 至少存在一个正权重。
+
+# 第二部分：变量语义、来源及预处理流程。
+# units表示预处理结果单位；preprocessing按声明顺序执行。
+variable_metadata:
+  os: {units: null, long_name: "Sea water salinity", source_name: "os", source_units: null, variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}], unconfirmed_fields: ["units", "source_units"]}  # 盐度单位及来源单位未确认。
+  ot: {units: "degree_Celsius", long_name: "Sea water potential temperature", source_name: "ot", source_units: "degree_Celsius", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  ou: {units: "m s-1", long_name: "Eastward sea water velocity", source_name: "ou", source_units: "m s-1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  ov: {units: "m s-1", long_name: "Northward sea water velocity", source_name: "ov", source_units: "m s-1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  sit: {units: "m", long_name: "Sea ice thickness", level_type: "surface", source_name: "sit", source_units: "m", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  ssh: {units: "m", long_name: "Sea surface height", level_type: "surface", source_name: "ssh", source_units: "m", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  sic: {units: "1", long_name: "Sea ice concentration", level_type: "surface", source_name: "sic", source_units: "1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  mlt: {units: "m", long_name: "Mixed layer thickness", level_type: "surface", source_name: "mlt", source_units: "m", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}

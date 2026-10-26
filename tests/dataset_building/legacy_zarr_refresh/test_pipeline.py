@@ -2,60 +2,33 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 
+import legacy_zarr_refresh as refresh
 import numpy as np
 import pytest
 import zarr
 from legacy_zarr_refresh import (
     LegacyZarrSource,
-    RefreshProfile,
+    correct_statistics,
+    create_refreshed_store,
     load_profiles,
     read_manifest,
     refresh_legacy_zarr,
     select_profiles,
 )
-from legacy_zarr_refresh.source import correct_statistics
-from legacy_zarr_refresh.store import (
-    create_refreshed_store,
+
+from tests.dataset_building.samples.legacy import (
+    profile as _profile,
 )
-
-
-def _write_legacy_store(path: Path) -> np.ndarray:
-    group = zarr.open_group(str(path), mode="w", zarr_format=2)
-    values = np.arange(16, dtype="f4").reshape(2, 2, 2, 2)
-    group.create_array("data", data=values, chunks=(1, 2, 2, 2))
-    group.create_array(
-        "channel",
-        data=np.asarray(["ssrd", "q1000"], dtype=str),
-        chunks=(2,),
-    )
-    group.create_array("lat", data=np.asarray([-1.0, 1.0]), chunks=(2,))
-    group.create_array("lon", data=np.asarray([0.0, 180.0]), chunks=(2,))
-    time = group.create_array("time", data=np.asarray([0, 6], dtype="i8"), chunks=(2,))
-    time.attrs["units"] = "hours since 2024-01-01 00:00:00"
-    np.save(path / "mean.npy", np.asarray([4.0, 2.0], dtype="f4"))
-    np.save(path / "std.npy", np.asarray([2.0, 0.5], dtype="f4"))
-    np.save(
-        path / "mask.npy",
-        np.asarray([[0.0, 0.8], [1.0, 0.2]], dtype="f4"),
-    )
-    return values
-
-
-def _profile(source: Path) -> RefreshProfile:
-    return RefreshProfile(
-        key="synthetic",
-        input=source,
-        output_name="synthetic.refreshed.zarr",
-        cadence_hours=6,
-        radiation_seconds=21600,
-        statistics_divide={"q1000": 2.0},
-        statistics_multiply={"ssrd": 3.0},
-        mask={"kind": "npy", "path": "mask.npy", "threshold": 0.5},
-        expected_channels=2,
-        expected_grid=(2, 2),
-    )
+from tests.dataset_building.samples.legacy import (
+    snapshot_files as _snapshot_files,
+)
+from tests.dataset_building.samples.legacy import (
+    write_legacy_store as _write_legacy_store,
+)
 
 
 def test_profiles_are_external_and_all_selects_every_profile(tmp_path: Path) -> None:
@@ -180,6 +153,140 @@ def test_end_to_end_refresh_aligns_channels_latitude_statistics_and_mask(
         "end": 1,
         "count": 2,
     }
+
+
+@pytest.mark.parametrize("as_module", [False, True])
+def test_single_file_cli_help(tmp_path: Path, as_module: bool) -> None:
+    script = Path(refresh.__file__).resolve()
+    assert script.name == "legacy_zarr_refresh.py"
+    assert not list(script.with_suffix("").glob("*.py"))
+    entry = (
+        ["-m", "examples.dataset_building.legacy_zarr_refresh"]
+        if as_module else [str(script)]
+    )
+    result = subprocess.run(
+        [sys.executable, *entry, "--help"],
+        cwd=script.parents[2] if as_module else tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    for command in ("inspect", "pilot", "convert", "validate", "auxiliary"):
+        assert command in result.stdout
+
+
+def test_cli_inspection_and_dry_run_are_read_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = tmp_path / "source.zarr"
+    _write_legacy_store(source)
+    config = tmp_path / "datasets.json"
+    config.write_text(
+        json.dumps({"datasets": {"synthetic": _profile(source).serializable()}}),
+        encoding="utf-8",
+    )
+    before = _snapshot_files(source)
+    refresh.main(["--config", str(config), "inspect", "--dataset", "all"])
+    inventory = json.loads(capsys.readouterr().out)
+    assert inventory["synthetic"]["channels"] == ["q1000", "ssrd"]
+    output = tmp_path / "output"
+    refresh.main([
+        "--config", str(config), "pilot", "--dataset", "synthetic",
+        "--output-root", str(output), "--start-index", "1", "--count", "1",
+        "--dry-run",
+    ])
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["source_indices"] == {"start": 1, "end": 1, "count": 1}
+    assert plan["actions"]["channel_reorder"] is True
+    assert plan["actions"]["latitude_flip"] is True
+    assert not output.exists()
+    assert _snapshot_files(source) == before
+
+
+def test_single_file_cli_refresh_validate_and_auxiliary(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = tmp_path / "source.zarr"
+    values = _write_legacy_store(source)
+    config = tmp_path / "datasets.json"
+    config.write_text(
+        json.dumps({"datasets": {"synthetic": _profile(source).serializable()}}),
+        encoding="utf-8",
+    )
+    before = _snapshot_files(source)
+    output_root = tmp_path / "output"
+    common = ["--config", str(config)]
+    selection = ["--dataset", "synthetic", "--output-root", str(output_root)]
+    subprocess.run(
+        [
+            sys.executable, str(Path(refresh.__file__).resolve()), *common,
+            "convert", *selection, "--workers", "2", "--full-data-check",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    output = output_root / "synthetic.refreshed.zarr"
+    manifest = read_manifest(output)
+    assert manifest["validation"]["full_data_check"] is True
+    assert len(manifest["validation"]["checked_data_chunks"]) == 2
+    group = zarr.open_group(str(output), mode="r")
+    np.testing.assert_array_equal(group["data"][:], values[:, [1, 0], ::-1, :].astype("f2"))
+    embedded_mask = np.asarray(group["mask"][:])
+
+    refresh.main([
+        *common, "validate", "--dataset", "synthetic",
+        "--zarr", str(output), "--full-data-check",
+    ])
+    assert json.loads(capsys.readouterr().out)["status"] == "ok"
+    target_before = _snapshot_files(output)
+    refresh.main([*common, "auxiliary", *selection, "--dry-run", "--strict"])
+    assert json.loads(capsys.readouterr().out)[0]["status"] == "planned"
+    assert _snapshot_files(output) == target_before
+    refresh.main([*common, "auxiliary", *selection, "--strict"])
+    assert json.loads(capsys.readouterr().out)[0]["status"] == "ok"
+    assert (output / "mask.npy").is_file()
+    assert (output / "auxiliary_refresh_manifest.json").is_file()
+    np.testing.assert_array_equal(group["mask"][:], embedded_mask)
+
+    refresh.main([
+        *common, "pilot", *selection, "--start-index", "1",
+        "--count", "1", "--full-data-check",
+    ])
+    capsys.readouterr()
+    pilot = output_root / "synthetic.refreshed.zarr.pilot.1_1"
+    assert read_manifest(pilot)["source_indices"] == {"start": 1, "end": 1, "count": 1}
+    assert _snapshot_files(source) == before
+
+
+def test_refresh_resumes_after_interrupted_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.zarr"
+    values = _write_legacy_store(source)
+    output_root = tmp_path / "output"
+    original = LegacyZarrSource.read_data
+
+    def interrupt(self: LegacyZarrSource, index: int) -> np.ndarray:
+        if index == 1:
+            raise RuntimeError("simulated interrupted source read")
+        return original(self, index)
+
+    monkeypatch.setattr(LegacyZarrSource, "read_data", interrupt)
+    with pytest.raises(RuntimeError, match="simulated interrupted source read"):
+        refresh_legacy_zarr(_profile(source), output_root)
+    state = output_root / ".synthetic.refreshed.zarr.refresh_state.json"
+    assert json.loads(state.read_text(encoding="utf-8"))["completed"] == 1
+    monkeypatch.setattr(LegacyZarrSource, "read_data", original)
+    output, manifest = refresh_legacy_zarr(
+        _profile(source), output_root, full_data_check=True,
+    )
+    assert manifest["validation"]["status"] == "ok"
+    assert not state.exists()
+    assert not (output_root / ".synthetic.refreshed.zarr.staging").exists()
+    group = zarr.open_group(str(output), mode="r")
+    np.testing.assert_array_equal(group["data"][:], values[:, [1, 0], ::-1, :].astype("f2"))
 
 
 def external_store(variable: str) -> Path:

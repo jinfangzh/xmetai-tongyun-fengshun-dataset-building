@@ -39,8 +39,12 @@ python -m pytest tests/evaluation/unit/test_weather_field_rmse.py::test_rmse_kno
 
 ## 组织与约定
 
-- `tests/validation/`：标准数据集结构、质量、辅助数组及转换校验。
-- `tests/dataset_building/legacy_zarr_refresh/`：旧 Zarr 更新、附属文件迁移及验证回归。
+- `tests/dataset_building/samples/`：集中维护旧 Zarr 和标准 v3 小样本工厂、手工预期结果及独立测试 YAML；不保存生产资料。
+- `tests/dataset_building/conftest.py`：共享样本准备，每项测试在自己的临时目录中生成资料。
+- `tests/dataset_building/test_conversion.py`：从旧 Zarr 到更新产物和附件的实际流程测试。
+- `tests/dataset_building/test_validation.py`：单套、独立多套校验和转换回执衔接的实际流程测试。
+- `tests/dataset_building/acceptance/`：构建产物标准、质量、附件、转换、证据和模块边界回归。
+- `tests/dataset_building/legacy_zarr_refresh/`：单文件示例 `examples/dataset_building/legacy_zarr_refresh.py` 的更新、附属文件迁移、CLI 和断点续写回归。
 - `tests/evaluation/unit/`：指标、配对、协议和执行配置的单元测试。
 - `tests/evaluation/integration/`：正式评测入口的合成回归与真实资料对表。
 - `tests/evaluation/helpers/`：共享资料工厂、批次构造、路径检查和独立参考基准。
@@ -66,16 +70,56 @@ python -m pytest tests/evaluation/unit/test_weather_field_rmse.py::test_rmse_kno
 ## 标准数据校验和 Zarr 更新
 
 ```bash
-python -m pytest tests/validation -q -rs
+# 样本驱动的主要流程测试
+python -m pytest tests/dataset_building/test_conversion.py tests/dataset_building/test_validation.py -q -rs
+# 同时运行保留的细节回归
+python -m pytest tests/dataset_building -q -rs
+# 只运行原有细节回归
+python -m pytest tests/dataset_building/acceptance -q -rs
 python -m pytest tests/dataset_building/legacy_zarr_refresh -q -rs
 ```
+
+主要流程测试按“固定样本 → 实际程序 → 已知结果”组织，不另设 integration 目录：
+
+- 旧 Zarr：2 个时次、2 个通道、2×2 网格。分别准备通道/纬度需要重排和已经对齐的输入，
+  输出都与 `samples/legacy_expected.json` 中手工确定的结果比较。核对串行/双线程转换、
+  mean/std 修正、逐值结果、v2 块键、掩膜、常量、权重和附件迁移；中断后验证只续写未完成时次。
+- 标准 v3：12 个时次、3×4 网格。第一套为 `t2m/q1000/tp` 三通道，第二套为
+  `q1000/t2m` 两通道，时间错开 10 天，各自使用独立的标准和运行配置。测试 quick 的
+  3 块选择与 full 的 12 块扫描、逐套结论、JSON/CSV/Markdown 报告和块台账。
+- 故障副本：通道错序、NaN、超界值、无效 std、缺块、损坏压缩块。核对具体失败检查项，
+  同批的另一套正常资料仍应通过。另验证 quick 未选中的坏块只能由 full 发现。
+- 转换证据：独立构造通道重排、纬度翻转和 2/4/8 倍线性映射的 v3 参考源，
+  运行源目标对照、生成真实回执，再接入 full 校验；错误数值不能形成有效验收结论。
+  这不是旧转换器已输出 v3 的证明。
+
+样本定义和预期值集中保存，实际 Zarr/NetCDF/NPY、运行配置、回执和报告均写入 pytest
+临时目录；测试核对转换源、校验输入及标准没有被程序修改，不依赖服务器资料或网络下载。
+小样本 YAML 独立编写，不从生产标准裁剪，不能将缩小的样本冒充满足完整生产时空范围的资料。
+原有细节回归保留并复用集中样本，不因增加流程测试删减已有断言。
+
+**格式边界：** 旧更新器当前输出 Zarr v2，而正式 YAML 标准要求 v3。
+流程测试明确断言 v2 产物被 v3 标准拒绝，不放宽标准或修改转换器使其“全绿”。
+样本回归通过仅证明所选软件行为正确，服务器全量资料仍应通过正式校验入口另行验收。
 
 这些测试默认使用按固定规则生成的小型 Zarr/NetCDF，实际执行数据校验、主数据更新、
 通道和经纬度对齐、统计量修正、Zarr v2 写入及附属文件迁移。
 合成资料测试应正常执行，并检查明确的预期结果。
+数据验收不包含 core/消费者/模型回执检查。回归覆盖旧字段拒绝、JSON/CSV/Markdown
+报告栏目和无模型依赖时的生产入口导入；原有 `core-70` 通道子集不属于删除范围。
+组合工作流及其接口已删除。回归验证两套时间范围不相交的数据仍可按各自标准批量验收，
+不会加入时间交集、共享网格或掩膜相同的跨数据集门槛。
+生产、规则、流程和支撑分别位于 dataset_building 下的 production、checks、workflows、support，
+源码中的 acceptance 层已移除；测试目录仍以 acceptance 表示验收业务。
+规则按格式、数值、存储和转换分组；附件布局和数值分别归入 format、values。
+quick/full 及批量执行位于 workflows，报告位于 support，转换回执业务核验位于 checks/conversion。
+模块边界回归检查新导入路径及旧实现没有重复残留，报告回归覆盖完成结论、输出形状及退出码。
+固定标准模型和严格 YAML 解析位于 `datakit.schema.datasets`，运行绑定留在流程层。
+边界回归独立导入并加载全部十份打包标准，禁止反向加载流程或生产，检查标准子包没有直接依赖数据读取后端。
 
 `test_external_refreshed_store_contract` 使用 `integration` 标记，依赖服务器资料；
 通过 `XMETAI_REFRESH_TEST_STORE` 指定已更新的 Zarr。未配置时该用例跳过。
+它只检查 v2 基本结构，不代替转换数值对照或严格 YAML 验收。
 
 ## 代码风格
 

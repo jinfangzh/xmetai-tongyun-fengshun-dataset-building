@@ -1,0 +1,25 @@
+{
+  "datasets": {
+    "oras5": {
+      "input": "/path/to/legacy/oras5.zarr",
+      "output_name": "oras5.refreshed.zarr",
+      "cadence_hours": 24,
+      "radiation_seconds": null,
+      "channel_coordinate": "auto",
+      "statistics": "auto",
+      "statistics_divide": {},
+      "statistics_multiply": {},
+      "channel_rename": {},
+      "mask": {
+        "kind": "netcdf",
+        "path": "mask.nc",
+        "variable": "lsm",
+        "threshold": 0.5
+      },
+      "expected_channels": null,
+      "expected_grid": null,
+      "already_refreshed": "error",
+      "notes": "Copy this template and replace all placeholder paths before use."
+    }
+  }
+}

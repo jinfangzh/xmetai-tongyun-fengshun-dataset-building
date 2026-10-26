@@ -1,0 +1,27 @@
+"""Shared receipt binding and report assertions for independent fixtures."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from tests.dataset_building.samples.standard import write_production_evidence as _receipt
+
+__all__ = ["SCHEMA_DIRECTORY", "_assert_counts", "_checks", "_receipt"]
+
+SCHEMA_DIRECTORY = Path(__file__).resolve().parents[3] / "datakit" / "schema" / "datasets"
+
+
+def _checks(report):
+    return {check.check_id: check.status for check in report.checks}
+
+
+def _assert_counts(report):
+    c = report.coverage
+    assert c["value_checked"] + c["read_failed"] + c["not_scanned"] == c["logical_blocks_expected"]
+    assert (
+        c["physically_present"]
+        + c["allowed_omitted"]
+        + c["unapproved_missing"]
+        + c["storage_unknown"]
+        == c["logical_blocks_expected"]
+    )

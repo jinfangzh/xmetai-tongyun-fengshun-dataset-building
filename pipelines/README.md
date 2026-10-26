@@ -6,10 +6,14 @@
 `dataset` 承载数据集制作、检查和导出；`evaluation` 承载评测流程、执行策略
 和命令行入口。具体数据、日期和输出目录由 `examples/` 的配置提供。
 
-`dataset_building` 独立维护本次产品标准、严格校验、扫描、配置加载和报告保存；
+`datakit.schema.datasets` 提供固定产品标准模型、严格 YAML 加载和独立标准文件；
+`dataset_building` 负责严格校验、扫描、执行配置加载和报告保存；
 配置与 CLI 位于 `examples/dataset_building/`。详见
-[数据集构建与标准校验](dataset_building/README.md)。现有 `dataset` 中的三个
-`validate_standard_*` 函数保留转发，基础库不依赖此流程包。
+[数据集构建与标准校验](dataset_building/README.md)。其下 production、checks、workflows、support
+直接并列，不再嵌套 acceptance。生产来源映射和元数据保持独立；checks 区分格式、数值、
+存储和转换规则；workflows 组织 quick/full、批量执行和转换对照；
+support 提供运行/转换对照规格、执行输入及报告。转换回执在转换规则中核验。现有 `dataset` 中的单套验收、
+转换对照两个 `validate_standard_*` 函数保留转发，基础库不依赖此流程包。
 
 `dataset/_conversion.py`、`dataset/_datasets.py`、`dataset/_statistics.py`、
 `dataset/_radar.py` 和 `dataset/_ensemble.py` 只是控制单文件体积的私有实现，

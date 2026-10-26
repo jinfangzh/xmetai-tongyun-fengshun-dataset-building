@@ -1,0 +1,108 @@
+meta_info:
+  name: Independent small validation sample
+  dataset_id: fixture.c3.tiny.h6
+  expected_root_dataset_id: fixture
+  product: {id: fixture.c3, version: '1.0', variant: tiny.h6}
+  schema_version: '2.0'
+  status: approved
+  template_version: v1
+  dataset_path: data.zarr
+  auxiliary_directory: data.zarr
+  dataset_version: v3
+  storage_format: {name: zarr, version: 3, allow_nested_groups: false}
+  data_revision: r1
+  validation_scope: strict-standard
+  identity_mapping_evidence: Independent fixture directory
+  time_coverage:
+    first: '2024-02-28T00'
+    last: '2024-03-01T18'
+    time_count: 12
+    time_resolution: {value: 6, unit: hour}
+    timezone: UTC
+  grid:
+    space_resolution: 1.5
+    coordinate_units: degree
+    latitude: {first: 90.0, last: 87.0, count: 3, direction: north-to-south}
+    longitude: {first: 0.0, last: 4.5, count: 4, direction: west-to-east}
+  pressure:
+    variables: [q]
+    units: hPa
+    channel_name_template: '{variable}{level}'
+    levels: [1000]
+  channels: [t2m, q1000, tp]
+  arrays:
+    data:
+      dimensions: [time, channel, lat, lon]
+      dtype: float16
+      chunks: {time: 1, channel: full, lat: full, lon: full}
+    time: {dimensions: [time], dtype: 'datetime64[ns]'}
+    channel: {dimensions: [channel], dtype: string}
+    lat: {dimensions: [lat], dtype: float32}
+    lon: {dimensions: [lon], dtype: float32}
+    mean: {dimensions: [channel], dtype: float32}
+    std: {dimensions: [channel], dtype: float32}
+    mask: {dimensions: [mask_channel, lat, lon], dtype: uint8}
+    mask_channel: {dimensions: [mask_channel], dtype: string}
+  mask:
+    channels: [land_mask, sea_mask]
+    allowed_values: [0, 1]
+    valid_value: 1
+    complement_sum: 1
+  metadata:
+    data_attributes:
+      data_representation: normalized
+      normalization_method: channel_dependent
+      mean_variable: mean
+      std_variable: std
+      scale_factor_location: channel.channel_info[*].scale_factor
+      add_offset_location: channel.channel_info[*].add_offset
+      inverse_transform: preprocessed_value = data * scale_factor + add_offset
+    channel_metadata:
+      attribute: channel_info
+      version_attribute: channel_info_schema_version
+      version: '1.0'
+      require_exact_channels: true
+      long_name_required: true
+      scale_factor_from: std
+      add_offset_from: mean
+      scale_offset_formula: preprocessed_value = normalized_value * scale_factor + add_offset
+  normalization:
+    statistics: {mean_finite: true, std_finite: true, std_positive: true}
+    effective_statistics:
+      tp: {mean: 0.0, std: 1.0}
+  auxiliaries:
+    check_variable_names: false
+    unregistered_file_status: warning
+    files: {}
+variable_metadata:
+  t2m:
+    units: K
+    long_name: t2m
+    source_name: t2m
+    source_units: K
+    level_type: height_above_ground
+    level: 2
+    level_units: m
+    variable_type: instantaneous
+    preprocessing:
+      - {operation: zscore, mean: /mean, std: /std}
+  q:
+    units: g kg-1
+    long_name: q1000
+    source_name: q
+    source_units: kg kg-1
+    variable_type: instantaneous
+    preprocessing:
+      - {operation: multiply, factor: 1000.0, input_units: kg kg-1, output_units: g kg-1}
+      - {operation: zscore, mean: /mean, std: /std}
+  tp:
+    units: '1'
+    long_name: tp
+    source_name: tp
+    source_units: m
+    level_type: surface
+    variable_type: accumulated
+    preprocessing:
+      - {operation: multiply, factor: 1000.0, input_units: m, output_units: mm}
+      - {operation: clip_min, minimum: 0.0}
+      - {operation: log1p}

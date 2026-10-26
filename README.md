@@ -10,8 +10,12 @@
 
 完整标准数据集的严格校验提供独立产品标准、quick/full 扫描、物理覆盖证明和发布报告。
 程序测试、十套配置及服务器运行步骤见 [标准数据集校验](docs/DATASET_VALIDATION.md)。
-产品定义与专用校验实现在 `pipelines/dataset_building/`，执行示例和配置位于
-`examples/dataset_building/`；基础库不依赖此流程，公共 schema 暂不新增产品标准。
+固定标准模型、YAML 加载和十份独立标准集中在 `datakit/schema/datasets/`。
+构建产物验收的检查、扫描、运行绑定、证据和报告集中在
+`pipelines/dataset_building/` 的 `checks/`、`workflows/`、`support/`，
+原有来源映射和生产元数据生成独立位于同层 `production/`，不再嵌套 acceptance。
+执行示例和配置位于 `examples/dataset_building/`；
+十份独立 YAML 随 `datakit/schema/datasets/` 分发，基础库不依赖验收流程。
 
 ## 模块边界
 
@@ -19,7 +23,7 @@
 datakit/
 ├── io/             # NetCDF、GRIB、NumPy、Zarr 的显式本地读写
 ├── evaluation/     # 评测数据契约、指标和配对
-├── schema/         # 通用维度别名和变量元数据
+├── schema/         # 通用维度/变量元数据；datasets 提供固定标准模型、YAML 解析及标准文件
 ├── transforms/     # 坐标、变量、单位、时间和空间转换
 ├── statistics/     # 描述统计和气候态算法
 ├── validation/     # schema、完整性和数值范围检查
@@ -27,6 +31,7 @@ datakit/
 └── visualization/  # 通用场、序列及雷达可视化
 pipelines/
 ├── dataset/        # 数据集制作、检查和导出流程
+├── dataset_building/ # production、checks、workflows、support 四类职责
 └── evaluation/     # 评测流程、执行策略、结果报告和入口
 examples/
 └── evaluation/configs/  # Fengqing 等具体评测配置

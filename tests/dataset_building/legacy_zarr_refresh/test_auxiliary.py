@@ -5,13 +5,13 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 import zarr
-from legacy_zarr_refresh import migrate_auxiliary_files
-from legacy_zarr_refresh.auxiliary_files import (
+from legacy_zarr_refresh import (
     build_const,
-)
-from legacy_zarr_refresh.store import (
     create_refreshed_store,
+    migrate_auxiliary_files,
 )
+
+from tests.dataset_building.samples.legacy import write_const as _write_const
 
 
 def _target_store(path: Path) -> None:
@@ -28,26 +28,6 @@ def _target_store(path: Path) -> None:
         land_mask=np.asarray([[True, False], [False, True]]),
         radiation_seconds=None,
     )
-
-
-def _write_const(path: Path) -> None:
-    values = np.asarray(
-        [
-            [[1.0, 2.0], [3.0, 4.0]],
-            [[0.0, 1.0], [1.0, 1.0]],
-        ],
-        dtype="f4",
-    )
-    dataset = xr.Dataset(
-        {"data": (("channel", "lat", "lon"), values)},
-        coords={
-            "channel": np.asarray(["z", "lsm"], dtype=str),
-            "lat": np.asarray([-1.0, 1.0]),
-            "lon": np.asarray([180.0, 0.0]),
-        },
-    )
-    dataset.to_netcdf(path)
-    dataset.close()
 
 
 def test_const_refresh_preserves_legacy_channels_without_inventing_six(

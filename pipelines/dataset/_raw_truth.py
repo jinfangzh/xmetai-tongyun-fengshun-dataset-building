@@ -14,7 +14,7 @@ import numpy as np
 import xarray as xr
 
 from datakit.io import open_netcdf_dataset
-from pipelines.dataset_building.definitions.era5_c116 import (
+from pipelines.dataset_building.production.era5_c116 import (
     DERIVED,
     DYNAMIC_CHANNELS,
     PRESSURE_VARIABLES as ERA5_PRESSURE_VARIABLES,

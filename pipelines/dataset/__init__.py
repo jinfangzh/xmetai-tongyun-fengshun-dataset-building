@@ -36,7 +36,6 @@ from ._validation import validate_zarr_netcdf_consistency
 from pipelines.dataset_building import (
     validate_standard_dataset,
     validate_standard_conversion,
-    validate_standard_combination,
 )
 from ._statistics import (
     build_difference_statistics,
@@ -187,5 +186,4 @@ __all__ = [
     "validate_zarr_netcdf_consistency",
     "validate_standard_dataset",
     "validate_standard_conversion",
-    "validate_standard_combination",
 ]
