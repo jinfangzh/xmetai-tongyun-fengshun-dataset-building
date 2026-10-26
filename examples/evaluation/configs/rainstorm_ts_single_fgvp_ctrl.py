@@ -5,7 +5,7 @@
 逐日拆段一模一样，只有预报数据源和输出根不同。跑完两份后用
 ``rainstorm_summary.py`` 并排比（FuXi 为主模型、FGVP-ctrl 为对比）。
 
-口径与 ``weather_ts_single_fgvp`` 一致：08–08 北京时 24h 窗、不分带。两种
+口径与 ``weather_ts_single_tongyun`` 一致：08–08 北京时 24h 窗、不分带。两种
 口径（纪要表过程记为 S 日至 E 日，0–0 日历口径）：
 
 口径 A（逐日 24h，``*_24h/{起报日}/``）：[S-1, E] 逐日 00UTC 起报，只评
@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 from pipelines.evaluation.config import EvalConfig
 from examples.evaluation.configs.rainstorm_cases_2025 import process_tuples
 
-#: 与 weather_ts_single_fgvp 同一套阈值：模板 5 档 + ≥250mm 极端量级补档。
+#: 与 weather_ts_single_tongyun 同一套阈值：模板 5 档 + ≥250mm 极端量级补档。
 TS_THRESHOLDS = [0.1, 10.0, 25.0, 50.0, 100.0, 250.0]
 
 #: 冒烟开关：True = 只跑 202521 一个过程；False = 全部 43 个。
@@ -95,7 +95,7 @@ for _code, _start, _end in PROCESSES:
                 output_dir=f"{OUTPUT_ROOT}/{_code}_24h/{_init}",
                 log_level="INFO",
                 execution={
-                    "mode": "threads",  # 轻指标 → threads（同 weather_ts_single_fgvp）
+                    "mode": "threads",  # 轻指标 → threads（同 weather_ts_single_tongyun）
                     "n_workers": 24,
                     "chunk_days": 1,
                     "lead_chunk_days": 1,  # 1 天时效 = 1 个 24h 采样点

@@ -129,8 +129,7 @@ _SCORE_FIELDS: Dict[str, str] = {
     "obs_activity": "activity_observation",
     "fc_obs_bias": "activity_bias",
     "power_ratio": "spectrum_power_ratio",
-    # 球谐带功率（group 列带频带标签，如 "1_4"），列名对标老仓归档
-    # spherical_bands_*.csv 的 spherical_{pred|obs|ratio}_{lo}_{hi}
+    # 球谐带功率：group 列保存频带标签，如 "1_4"。
     "spherical_pred": "spherical_band_power_forecast",
     "spherical_obs": "spherical_band_power_observation",
     "spherical_ratio": "spherical_band_power_ratio",
@@ -456,7 +455,7 @@ def categorical_wide(tables: ResultTables) -> pd.DataFrame:
     return wide[WIDE_COLUMNS]
 
 
-#: 概率评分宽表列（列名与参考实现 aroc_bss_*.csv 对齐，去掉综合行）
+#: 概率评分宽表列；综合统计由报告按有效阈值计算，不写综合行。
 PROBABILITY_WIDE_COLUMNS: List[str] = [
     "run_id",
     "window_h",
@@ -480,8 +479,7 @@ def probability_wide(tables: ResultTables) -> pd.DataFrame:
     """把概率评分结果透视成 阈值 x 时效 宽表（AROC/BS/BSS）。
 
     评分值来自 ``scores.csv``，``BS_ref`` / ``base_rate`` / ``n_points`` 等诊断量
-    来自明细表。列名与参考实现 ``aroc_bss_*.csv`` 一致（少一列 ``n_used``，
-    且不生成跨时效的 AVG 综合行——聚合口径应由展示层显式声明）。
+    来自明细表。不生成跨时效的 AVG 综合行，聚合口径由展示层显式声明。
     """
     scores = tables.scores
     if scores.empty or "product_kind" not in scores.columns:

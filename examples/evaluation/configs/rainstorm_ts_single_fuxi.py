@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """2025 年暴雨过程个例检验（FuXi 确定性 × Diamond 站点）。
 
-口径与 ``weather_ts_single_fgvp`` 完全一致——08–08 北京时 24h 窗、同一份站表
+口径与 ``weather_ts_single_tongyun`` 完全一致——08–08 北京时 24h 窗、同一份站表
 （``zd_sta_10285.dat``）、同一套阈值（含 ≥250 补档）；只是把"连续时段"
 换成纪要表的"逐过程"：43 个过程 × 2 种口径。**不分纬度带，只出全球行。**
 
@@ -30,7 +30,7 @@ from datetime import datetime, timedelta
 from pipelines.evaluation.config import EvalConfig
 from examples.evaluation.configs.rainstorm_cases_2025 import process_tuples
 
-#: 与 weather_ts_single_fgvp 同一套阈值：模板 5 档 + ≥250mm 极端量级补档。
+#: 与 weather_ts_single_tongyun 同一套阈值：模板 5 档 + ≥250mm 极端量级补档。
 TS_THRESHOLDS = [0.1, 10.0, 25.0, 50.0, 100.0, 250.0]
 
 #: 冒烟开关：True = 只跑 202521 一个过程；False = 全部 43 个。
@@ -97,7 +97,7 @@ for _code, _start, _end in PROCESSES:
                 output_dir=f"{OUTPUT_ROOT}/{_code}_24h/{_init}",
                 log_level="INFO",
                 execution={
-                    "mode": "threads",  # 轻指标 → threads（同 weather_ts_single_fgvp）
+                    "mode": "threads",  # 轻指标 → threads（同 weather_ts_single_tongyun）
                     "n_workers": 24,
                     "chunk_days": 1,
                     "lead_chunk_days": 1,  # 1 天时效 = 1 个 24h 采样点

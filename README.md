@@ -47,7 +47,7 @@ examples/
 通过 `pipelines.evaluation` 组织执行；
 具体配置位于 `examples/evaluation/configs/`。
 
-## Fengqing 评测迁移
+## Fengqing 评测
 
 安装评测与测试依赖：
 
@@ -55,7 +55,7 @@ examples/
 python -m pip install -e '.[all,test]'
 ```
 
-原有 Fengqing 真实资料测试已迁至 `tests/evaluation/integration/`。资料仍按原测试
+Fengqing 真实资料测试位于 `tests/evaluation/integration/`。资料按测试
 约定位于 `/workspace/data/shenzw/fdp_test_data/`，包含 `fengqing/`、`cra_root/`、
 `cli_fake/`；站点降水测试还需要 `rain/`。在资料齐备的环境批量运行：
 
@@ -70,7 +70,7 @@ python -m pytest -q tests/evaluation/integration/test_fdp_fengqing_realdata.py -
 ```
 
 缺少资料时测试会跳过。评测代码与配置可独立从 `datakit.evaluation` 导入，
-无需安装原 `xmetai-evaluation` 包。
+评测流程由本仓库提供。
 
 ## 新用户快速开始
 
