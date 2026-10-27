@@ -9,74 +9,109 @@ This directory contains separate, runnable dataset-building workflows:
 
 ## Legacy Zarr refresh
 
-Like the NetCDF conversion examples, the refresh example uses argument parsing,
-helper functions and a `main()` entry point in one Python file. It refreshes
-existing normalized Zarr stores, not raw NetCDF inputs, and does not apply
-physical unit conversions again. Its workflow deliberately remains outside
-the supported `datakit` API while the legacy dataset contract is under review.
+The single-file example reads existing normalized v2 or v3 sources and writes
+Zarr v3. It does not reapply unit conversions or normalize the main values again.
+Source paths, explicit aliases, statistics corrections and mask adapters live in
+JSON; `target_schema` selects an independent YAML standard in
+[`datakit/schema/datasets`](../../datakit/schema/datasets).
 
-All five operations are preserved: source inspection, pilot refresh, complete
-refresh, output validation and optional auxiliary-file migration. Channel
-metadata, source adapters, Zarr v2 writing and validation now live in the same
-script rather than a separate package. Server paths and per-dataset correction
-rules remain in external JSON, not hardcoded Python defaults.
+The [JSON example](configs/legacy_zarr_refresh.example.json) contains all ten
+product/variant selections. Replace the placeholder input paths and mask source
+for the selected dataset; verify statistics corrections independently before
+production. Empty correction dictionaries do not certify the source statistics.
+Relative input and YAML paths resolve against the JSON file's directory. If
+copying the JSON elsewhere, update `target_schema`, preferably to an absolute path.
+Install the repository and its dependencies before running the example from
+another directory.
 
-Copy [the configuration template](configs/legacy_zarr_refresh.example.json),
-replace its placeholder paths, then inspect and dry-run before writing:
+The target YAML supplies the exact channel order, grid and latitude direction,
+root identity, schema/content versions, data revision and channel semantics.
+CRA c71 is south-to-north; the other nine are north-to-south. Missing or extra
+channels fail, even if the total count matches. Data, statistics and embedded
+masks are reordered together. Source time coverage, cadence, radiation window
+and full grid must agree with the selected standard before output is created.
+For appended data, prepare a reviewed YAML with the actual coverage and revision;
+the refresh never changes a standard to fit its source.
 
-```bash
-python examples/dataset_building/legacy_zarr_refresh.py \
-  --config /path/to/datasets.json inspect --dataset all
-
-python examples/dataset_building/legacy_zarr_refresh.py \
-  --config /path/to/datasets.json pilot --dataset oras5 \
-  --output-root /path/to/output --count 4 --dry-run
-```
-
-Write a pilot, then refresh the complete dataset:
-
-```bash
-python examples/dataset_building/legacy_zarr_refresh.py \
-  --config /path/to/datasets.json pilot --dataset oras5 \
-  --output-root /path/to/output --count 4 --full-data-check
-
-python examples/dataset_building/legacy_zarr_refresh.py \
-  --config /path/to/datasets.json convert --dataset oras5 \
-  --output-root /path/to/output --workers 4
-```
-
-Writes use staging and a resumable progress record. Existing completed outputs
-are not deleted automatically; explicit `--overwrite` backs them up before
-replacement. The input remains read-only.
-
-Validate an output or migrate its auxiliary files:
+Inspect and dry-run before writing:
 
 ```bash
-python examples/dataset_building/legacy_zarr_refresh.py \
-  --config /path/to/datasets.json validate --dataset oras5 \
-  --zarr /path/to/output/oras5.refreshed.zarr --full-data-check
+python -m examples.dataset_building.legacy_zarr_refresh \
+  --config /path/to/datasets.json inspect --dataset oras5_c88_1p5_h24
 
-python examples/dataset_building/legacy_zarr_refresh.py \
-  --config /path/to/datasets.json auxiliary --dataset oras5 \
-  --output-root /path/to/output --target-name oras5.refreshed.zarr --dry-run
+python -m examples.dataset_building.legacy_zarr_refresh \
+  --config /path/to/datasets.json pilot --dataset oras5_c88_1p5_h24 \
+  --output-root /workspace/xujn/refresh-pilot --count 4 --dry-run
 ```
 
-Remove `--dry-run` to write auxiliary files. The embedded Zarr mask is preserved
-unless `--refresh-embedded-mask` is explicitly requested after verifying its
-semantics against `const.nc/lsm`. Constant channels retain their original names
-and order; migration does not invent additional channels.
+Write a pilot, then refresh to a separate output directory:
 
-The old `legacy_zarr_refresh/cli.py` entry point and package submodules have
-been removed. Use the single script above; from the repository root,
-`python -m examples.dataset_building.legacy_zarr_refresh` also works.
-Tests import helpers directly from the single module.
+```bash
+python -m examples.dataset_building.legacy_zarr_refresh \
+  --config /path/to/datasets.json pilot --dataset oras5_c88_1p5_h24 \
+  --output-root /workspace/xujn/refresh-pilot --count 4 --full-data-check
 
-Regression tests in `tests/dataset_building/legacy_zarr_refresh/` generate small,
-deterministic Zarr and NetCDF inputs and cover value alignment, statistics,
-masks, auxiliary migration, CLI operations and interrupted-write resumption.
-Only the external-store contract check requires `XMETAI_REFRESH_TEST_STORE`;
-missing server data does not skip synthetic regression tests. Zarr 3.1.6 or
-newer is required to read the server's fixed-length string arrays.
+python -m examples.dataset_building.legacy_zarr_refresh \
+  --config /path/to/datasets.json convert --dataset oras5_c88_1p5_h24 \
+  --output-root /workspace/xujn/refresh-output --workers 1 --full-data-check
+```
+
+Each output main chunk contains one full frame in float16. Time is stored as
+`datetime64[ns]`; strings use fixed-length UTF-32, and v3 default chunk keys use
+`/` separators. Arrays carry native `dimension_names`; consolidated metadata is
+written inline. All-fill frames are physically written rather than silently
+omitted. At 0.25 degrees, a c116 frame alone is about 230 MiB; increase workers
+only after budgeting for source reads, decoding, reordering and compression.
+
+Writes use staging and a resumable progress record bound to the YAML SHA256.
+Changing the template invalidates old staging. Existing completed outputs require
+explicit `--overwrite`, which keeps a backup. The input remains read-only.
+A pilot retains the selected target identity but covers only its chosen time
+slice; it must not be presented as satisfying the full production coverage.
+
+Validate a complete refreshed output against its source, then migrate auxiliaries:
+
+```bash
+python -m examples.dataset_building.legacy_zarr_refresh \
+  --config /path/to/datasets.json validate --dataset oras5_c88_1p5_h24 \
+  --zarr /workspace/xujn/refresh-output/<output_name> --full-data-check
+
+python -m examples.dataset_building.legacy_zarr_refresh \
+  --config /path/to/datasets.json auxiliary --dataset oras5_c88_1p5_h24 \
+  --output-root /workspace/xujn/refresh-output --strict --dry-run
+```
+
+Replace `<output_name>` with the selected JSON entry's directory name. Remove
+`--dry-run` to write auxiliaries. Their axes follow the output grid. With a target
+schema, const channel sets must match and are reordered to the declared order;
+NetCDF data-variable names are preserved without inventing a naming standard.
+Weights are written as `weight.nc` for ORAS5 and `weight.npy` for the other
+products. The declared nonnegative tolerance is checked without clipping values.
+The embedded mask is preserved unless `--refresh-embedded-mask` is explicitly
+requested after verifying its semantics. Optional external masks do not acquire
+an approved role simply by being copied.
+
+Execution manifests are siblings of the Zarr directory:
+
+```text
+refresh-output/
+├── <output_name>/
+├── <output_name>.refresh_manifest.json
+└── <output_name>.auxiliary_refresh_manifest.json
+```
+
+This keeps unregistered JSON reports out of the standard store. `read_manifest`
+reads the new location and can still read historical in-store manifests. A
+refresh manifest is a conversion diagnostic, not an independent production
+completion receipt. Run the standard validation CLI separately after auxiliary
+migration; `--full-data-check` does not replace its quality or publication gates.
+
+Regression tests cover known-value samples, both source formats, exact product
+orders, native v3 encoding, auxiliary formats, CLI operations, missing chunks and
+interrupted-write resumption. Ten explicitly miniature product samples retain
+all 786 ordered channel entries and product semantics while reducing only the
+test grid and coverage. They are not production datasets. Only the external-store
+check needs `XMETAI_REFRESH_TEST_STORE`; synthetic tests do not require a server.
 
 ## Standard dataset validation
 

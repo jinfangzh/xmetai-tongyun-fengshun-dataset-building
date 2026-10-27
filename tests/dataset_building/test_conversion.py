@@ -12,6 +12,7 @@ import xarray as xr
 import zarr
 
 from pipelines.dataset_building import validate_standard_dataset
+from pipelines.dataset_building.support.inputs import load_validation_schema
 
 from .samples.legacy import snapshot_files
 
@@ -39,10 +40,14 @@ def test_refresh_workflow_matches_known_results(legacy_sample, tmp_path, workers
     assert group["data"].dtype == np.dtype("float16")
     assert group["data"].shape == (2, 2, 2, 2)
     assert group["data"].chunks == (1, 2, 2, 2)
-    assert json.loads((output / ".zgroup").read_text(encoding="utf-8"))["zarr_format"] == 2
-    assert {file.name for file in (output / "data").iterdir() if not file.name.startswith(".")} == {
-        "0.0.0.0",
-        "1.0.0.0",
+    assert json.loads((output / "zarr.json").read_text(encoding="utf-8"))["zarr_format"] == 3
+    assert {
+        file.relative_to(output / "data").as_posix()
+        for file in (output / "data/c").rglob("*")
+        if file.is_file()
+    } == {
+        "c/0/0/0/0",
+        "c/1/0/0/0",
     }
     assert manifest["validation"]["status"] == "ok"
     assert manifest["validation"]["full_data_check"] is True
@@ -68,7 +73,7 @@ def test_refresh_workflow_matches_known_results(legacy_sample, tmp_path, workers
         np.testing.assert_array_equal(const.lat.values, expected["lat"])
         np.testing.assert_array_equal(const.lon.values, expected["lon"])
     np.testing.assert_array_equal(group["mask"][0], expected["land_mask"])
-    assert (output / "auxiliary_refresh_manifest.json").is_file()
+    assert output.with_name(output.name + ".auxiliary_refresh_manifest.json").is_file()
     assert snapshot_files(profile.input) == original
     assert snapshot_files(auxiliary_source) == original_auxiliary
     assert not (output_root / ".synthetic.refreshed.zarr.staging").exists()
@@ -122,21 +127,26 @@ def test_refreshed_output_is_not_silently_processed_twice(legacy_sample, tmp_pat
     assert snapshot_files(output) == original
 
 
-def test_current_refresh_output_is_rejected_by_v3_standard(
-    legacy_sample, published_schema, tmp_path
-):
+@pytest.mark.parametrize("mode", ["quick", "full"])
+def test_refresh_output_passes_its_independent_v3_standard(legacy_sample, tmp_path, mode):
     profile, _, _ = legacy_sample
-    _, spec, schema, _ = published_schema
+    spec, _ = load_validation_schema(profile.target_schema)
+    schema = profile.target_schema
     frozen_yaml = schema.read_bytes()
     output, _ = refresh.refresh_legacy_zarr(profile, tmp_path / "output", full_data_check=True)
     before = snapshot_files(output)
 
-    report = validate_standard_dataset(output, spec, mode="full")
+    report = validate_standard_dataset(output, spec, mode=mode)
 
     checks = {check.check_id: check for check in report.checks}
-    assert checks["storage.zarr_format"].status == "fail"
+    assert checks["storage.zarr_format"].status == "pass"
     assert checks["storage.zarr_format"].expected == 3
-    assert checks["storage.zarr_format"].observed == 2
-    assert not report.release_passed
+    assert checks["storage.zarr_format"].observed == 3
+    if mode == "quick":
+        assert report.quick_passed, report.quick_blocking_checks
+    else:
+        assert report.coverage["value_scan_complete"]
+        assert report.coverage["storage_audit_complete"]
+    assert not [check for check in report.checks if check.status == "fail"]
     assert snapshot_files(output) == before
     assert schema.read_bytes() == frozen_yaml

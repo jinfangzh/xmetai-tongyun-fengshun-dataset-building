@@ -1,6 +1,6 @@
 """Refresh existing normalized Zarr stores without repeating unit conversions.
 
-Keep dataset paths and correction rules in an external JSON configuration.
+Keep source paths and correction rules in JSON; select the target YAML standard.
 Inspect or dry-run first, write a pilot, then refresh and validate the full store.
 Optional auxiliary migration preserves the embedded mask unless requested.
 """
@@ -8,26 +8,42 @@ Optional auxiliary migration preserves the embedded mask unless requested.
 from __future__ import annotations
 
 import argparse
-from collections.abc import Iterable, Mapping, Sequence
 import concurrent.futures
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from fnmatch import fnmatchcase
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import time
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
+from fnmatch import fnmatchcase
+from pathlib import Path
 from typing import Any
 
 import numpy as np
-from numcodecs import Blosc
 import xarray as xr
 import zarr
 
+from datakit.schema.datasets import (
+    DatasetSchema,
+    build_standard_channel_info,
+    load_schema,
+    resolve_config_path,
+    verify_schema_unchanged,
+)
 
-__all__ = ['LegacyZarrSource', 'RefreshProfile', 'build_refresh_plan', 'load_profiles', 'migrate_auxiliary_files', 'read_manifest', 'refresh_legacy_zarr', 'select_profiles', 'validate_refreshed_store']
+__all__ = [
+    "LegacyZarrSource",
+    "RefreshProfile",
+    "build_refresh_plan",
+    "load_profiles",
+    "migrate_auxiliary_files",
+    "read_manifest",
+    "refresh_legacy_zarr",
+    "select_profiles",
+    "validate_refreshed_store",
+]
 
 
 @dataclass(frozen=True)
@@ -36,6 +52,7 @@ class RefreshProfile:
     input: Path
     output_name: str
     cadence_hours: int
+    target_schema: Path
     radiation_seconds: int | None = None
     channel_coordinate: str = "auto"
     statistics: str = "auto"
@@ -49,13 +66,18 @@ class RefreshProfile:
     notes: str = ""
 
     @classmethod
-    def from_dict(cls, key: str, value: dict[str, Any]) -> "RefreshProfile":
+    def from_dict(cls, key: str, value: dict[str, Any]) -> RefreshProfile:
+        if not value.get("target_schema"):
+            raise ValueError(
+                f"{key}: target_schema must reference an explicit YAML standard"
+            )
         grid = value.get("expected_grid")
         return cls(
             key=key,
             input=Path(value["input"]),
             output_name=str(value["output_name"]),
             cadence_hours=int(value["cadence_hours"]),
+            target_schema=Path(value["target_schema"]),
             radiation_seconds=(
                 None
                 if value.get("radiation_seconds") is None
@@ -92,6 +114,7 @@ class RefreshProfile:
             "input": str(self.input),
             "output_name": self.output_name,
             "cadence_hours": self.cadence_hours,
+            "target_schema": str(self.target_schema),
             "radiation_seconds": self.radiation_seconds,
             "channel_coordinate": self.channel_coordinate,
             "statistics": self.statistics,
@@ -112,7 +135,14 @@ def load_profiles(path: Path) -> dict[str, RefreshProfile]:
     raw = document.get("datasets")
     if not isinstance(raw, dict) or not raw:
         raise ValueError(f"{path}: expected a non-empty 'datasets' object")
-    return {key: RefreshProfile.from_dict(key, value) for key, value in raw.items()}
+    return {
+        key: replace(
+            RefreshProfile.from_dict(key, value),
+            input=resolve_config_path(path, value["input"]),
+            target_schema=resolve_config_path(path, value["target_schema"]),
+        )
+        for key, value in raw.items()
+    }
 
 
 def select_profiles(
@@ -126,254 +156,22 @@ def select_profiles(
     return [profiles[name] for name in requested]
 
 
-BASE_LEVELS = (1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50)
-W_LEVELS = BASE_LEVELS + (10,)
-PRESSURE_VARIABLES = ("z", "t", "u", "v", "q")
-SURFACE = (
-    "d2m", "t2m", "msl", "sp", "skt", "u10m", "v10m", "u100m", "v100m",
-    "sst", "tcw", "tp", "sd",
-)
-DERIVED = ("ws10m", "ws100m")
-CLOUD_RADIATION = ("lcc", "mcc", "hcc", "tcc", "ssr", "ssrd", "fdir", "ttr")
-SOIL = ("swvl1", "swvl2", "stl1", "stl2")
-WAVE = ("wmb", "mwd", "cdww", "mwp", "swh")
-RADIATION = frozenset(("ssr", "ssrd", "fdir", "ttr"))
-OCEAN_DEPTHS_CM = (
-    50, 266, 514, 809, 1177, 1652, 2275, 3087, 4118, 5385, 6902,
-    8692, 10803, 13307, 16316, 19978, 22114, 27135, 33386, 41179, 50863,
-)
-OCEAN_DEPTH_VARIABLES = ("os", "ot", "ou", "ov")
-OCEAN_SURFACE = ("sit", "ssh", "sic", "mlt")
-OCEAN_CHANNELS = (
-    tuple(f"{variable}{depth}" for variable in OCEAN_DEPTH_VARIABLES for depth in OCEAN_DEPTHS_CM)
-    + OCEAN_SURFACE
-)
-
-# Exact 116-channel order from the approved ERA5 v3 template.
-TEMPLATE_CHANNELS = (
-    tuple(f"{variable}{level}" for variable in PRESSURE_VARIABLES for level in BASE_LEVELS)
-    + SURFACE
-    + tuple(f"{variable}10" for variable in PRESSURE_VARIABLES)
-    + tuple(f"w{level}" for level in W_LEVELS)
-    + DERIVED + CLOUD_RADIATION + SOIL + WAVE
-)
-
-# Verified legacy-only channels that are absent from the 116-channel template.
-# They are inserted after the closest template channel without changing the
-# relative order of any template channels.
-SUPPLEMENTS_AFTER: dict[str, tuple[str, ...]] = {
-    "t2m": ("t2m_avg", "t2m_min", "t2m_max", "q2m"),
-    "tcw": ("tcwv",),
-    "swvl2": ("swvl3", "swvl4"),
-    "stl2": ("stl3", "stl4"),
-}
-
-
-def _complete_channel_order() -> tuple[str, ...]:
-    result: list[str] = []
-    for name in TEMPLATE_CHANNELS:
-        result.append(name)
-        result.extend(SUPPLEMENTS_AFTER.get(name, ()))
-    return tuple(result)
-
-
-CHANNEL_ORDER = _complete_channel_order() + OCEAN_CHANNELS
-CHANNEL_RANK = {name: index for index, name in enumerate(CHANNEL_ORDER)}
-
-if len(TEMPLATE_CHANNELS) != 116 or len(set(TEMPLATE_CHANNELS)) != 116:
-    raise RuntimeError("template channel definition must contain 116 unique labels")
-if len(CHANNEL_RANK) != len(CHANNEL_ORDER):
-    raise RuntimeError("complete channel order contains duplicate labels")
-
-
 def canonicalize_channels(
-    source_channels: Sequence[str], rename: Mapping[str, str]
+    source_channels: Sequence[str],
+    rename: Mapping[str, str],
+    target_channels: Sequence[str],
 ) -> tuple[tuple[str, ...], tuple[int, ...]]:
+    """Select the exact YAML order, applying only explicit source aliases."""
     renamed = tuple(rename.get(name, name) for name in source_channels)
+    target = tuple(target_channels)
     if len(set(renamed)) != len(renamed):
         raise ValueError(f"channel rename creates duplicate labels: {renamed}")
-    unknown = [name for name in renamed if name not in CHANNEL_RANK]
-    if unknown:
+    missing, extra = set(target) - set(renamed), set(renamed) - set(target)
+    if missing or extra:
         raise ValueError(
-            "channels are absent from the template/supplement registry: "
-            + ", ".join(unknown)
+            f"channels differ from target schema: missing={sorted(missing)}, extra={sorted(extra)}"
         )
-    indices = tuple(sorted(range(len(renamed)), key=lambda index: CHANNEL_RANK[renamed[index]]))
-    return tuple(renamed[index] for index in indices), indices
-
-
-VARIABLE_METADATA = {
-    "z": ("m2 s-2", "Geopotential"),
-    "t": ("K", "Temperature"),
-    "u": ("m s-1", "Eastward wind"),
-    "v": ("m s-1", "Northward wind"),
-    "q": ("g kg-1", "Specific humidity"),
-    "w": ("Pa s-1", "Vertical velocity"),
-    "d2m": ("K", "2 metre dewpoint temperature"),
-    "t2m": ("K", "2 metre temperature"),
-    "t2m_avg": ("K", "Daily average 2 metre temperature"),
-    "t2m_min": ("K", "Daily minimum 2 metre temperature"),
-    "t2m_max": ("K", "Daily maximum 2 metre temperature"),
-    "q2m": ("g kg-1", "2 metre specific humidity"),
-    "msl": ("Pa", "Mean sea level pressure"),
-    "sp": ("Pa", "Surface pressure"),
-    "skt": ("K", "Skin temperature"),
-    "u10m": ("m s-1", "10 metre eastward wind"),
-    "v10m": ("m s-1", "10 metre northward wind"),
-    "u100m": ("m s-1", "100 metre eastward wind"),
-    "v100m": ("m s-1", "100 metre northward wind"),
-    "sst": ("K", "Sea surface temperature"),
-    "tcw": ("kg m-2", "Total column water"),
-    "tcwv": ("kg m-2", "Total column water vapour"),
-    "tp": ("1", "Log-transformed total precipitation"),
-    "sd": ("m", "Snow depth water equivalent"),
-    "ws10m": ("m s-1", "10 metre wind speed"),
-    "ws100m": ("m s-1", "100 metre wind speed"),
-    "lcc": ("1", "Low cloud cover"),
-    "mcc": ("1", "Medium cloud cover"),
-    "hcc": ("1", "High cloud cover"),
-    "tcc": ("1", "Total cloud cover"),
-    "ssr": ("W m-2", "Surface net short-wave radiation"),
-    "ssrd": ("W m-2", "Surface short-wave radiation downwards"),
-    "fdir": ("W m-2", "Surface direct short-wave radiation"),
-    "ttr": ("W m-2", "Top net long-wave radiation"),
-    "swvl1": ("m3 m-3", "Volumetric soil water layer 1"),
-    "swvl2": ("m3 m-3", "Volumetric soil water layer 2"),
-    "swvl3": ("m3 m-3", "Volumetric soil water layer 3"),
-    "swvl4": ("m3 m-3", "Volumetric soil water layer 4"),
-    "stl1": ("K", "Soil temperature level 1"),
-    "stl2": ("K", "Soil temperature level 2"),
-    "stl3": ("K", "Soil temperature level 3"),
-    "stl4": ("K", "Soil temperature level 4"),
-    "wmb": ("m", "Model bathymetry"),
-    "mwd": ("degree", "Mean wave direction"),
-    "cdww": ("1", "Coefficient of drag with waves"),
-    "mwp": ("s", "Mean wave period"),
-    "swh": ("m", "Significant height of combined wind waves and swell"),
-    "os": ("1", "Ocean salinity"),
-    "ot": ("degree_Celsius", "Ocean potential temperature"),
-    "ou": ("m s-1", "Eastward ocean current"),
-    "ov": ("m s-1", "Northward ocean current"),
-    "sit": ("m", "Sea-ice thickness"),
-    "ssh": ("m", "Sea-surface height"),
-    "sic": ("1", "Sea-ice concentration"),
-    "mlt": ("m", "Ocean mixed-layer thickness"),
-}
-SOURCE_UNITS = {name: units for name, (units, _) in VARIABLE_METADATA.items()}
-SOURCE_UNITS.update({
-    "q": "kg kg-1", "q2m": "kg kg-1",
-    "ssr": "J m-2", "ssrd": "J m-2", "fdir": "J m-2", "ttr": "J m-2",
-    "tp": "m",
-})
-SOURCE_NAMES: dict[str, str | list[str]] = {name: name for name in VARIABLE_METADATA}
-SOURCE_NAMES.update({
-    "ws10m": ["u10m", "v10m"],
-    "ws100m": ["u100m", "v100m"],
-    "swvl1": "vsw1", "swvl2": "vsw2",
-    "stl1": "sot1", "stl2": "sot2",
-})
-
-
-def split_channel(channel: str) -> tuple[str, int | None]:
-    for variable in OCEAN_DEPTH_VARIABLES:
-        suffix = channel.removeprefix(variable)
-        if channel.startswith(variable) and suffix.isdigit():
-            return variable, int(suffix)
-    for variable in (*PRESSURE_VARIABLES, "w"):
-        suffix = channel.removeprefix(variable)
-        if channel.startswith(variable) and suffix.isdigit():
-            return variable, int(suffix)
-    return channel, None
-
-
-def preprocessing_metadata(
-    channel: str, variable: str, *, radiation_seconds: int | None
-) -> list[dict[str, Any]]:
-    zscore = {"operation": "zscore", "mean": "/mean", "std": "/std"}
-    if variable in {"q", "q2m"}:
-        return [{
-            "operation": "multiply", "factor": 1000.0,
-            "input_units": "kg kg-1", "output_units": "g kg-1",
-        }, zscore]
-    if variable in RADIATION:
-        if radiation_seconds is None:
-            raise ValueError(f"radiation_seconds is required for {channel}")
-        return [{
-            "operation": "divide", "divisor": float(radiation_seconds),
-            "accumulation_window_seconds": int(radiation_seconds),
-            "input_units": "J m-2", "output_units": "W m-2",
-        }, zscore]
-    if channel == "tp":
-        return [
-            {"operation": "multiply", "factor": 1000.0, "input_units": "m", "output_units": "mm"},
-            {"operation": "clip_min", "minimum": 0.0},
-            {"operation": "log1p"},
-        ]
-    if channel == "ws10m":
-        return [{"operation": "hypot", "inputs": ["u10m", "v10m"]}, zscore]
-    if channel == "ws100m":
-        return [{"operation": "hypot", "inputs": ["u100m", "v100m"]}, zscore]
-    return [zscore]
-
-
-def channel_level_metadata(variable: str, level: int | None) -> dict[str, Any]:
-    if variable in OCEAN_DEPTH_VARIABLES and level is not None:
-        return {
-            "level_type": "depth_below_sea_surface",
-            "level": level / 100.0,
-            "level_units": "m",
-        }
-    if level is not None:
-        return {"level_type": "pressure", "level": level, "level_units": "hPa"}
-    height = {
-        "d2m": 2, "t2m": 2, "t2m_avg": 2, "t2m_min": 2, "t2m_max": 2,
-        "q2m": 2, "u10m": 10, "v10m": 10, "ws10m": 10,
-        "u100m": 100, "v100m": 100, "ws100m": 100,
-    }.get(variable)
-    if height is not None:
-        return {"level_type": "height_above_ground", "level": height, "level_units": "m"}
-    if variable.startswith("stl") or variable.startswith("swvl"):
-        return {"level_type": "soil_layer", "level": int(variable[-1]), "level_units": "layer_index"}
-    return {"level_type": "surface"}
-
-
-def build_channel_info(
-    channels: Sequence[str], mean: np.ndarray, std: np.ndarray, radiation_seconds: int | None
-) -> dict[str, dict[str, Any]]:
-    mean_values = np.asarray(mean, dtype="f4").reshape(-1)
-    std_values = np.asarray(std, dtype="f4").reshape(-1)
-    if len(mean_values) != len(channels) or len(std_values) != len(channels):
-        raise ValueError("mean/std must align positionally with channels")
-    result: dict[str, dict[str, Any]] = {}
-    for index, channel in enumerate(channels):
-        variable, level = split_channel(str(channel))
-        if variable not in VARIABLE_METADATA:
-            raise ValueError(f"missing channel metadata for {channel}")
-        units, long_name = VARIABLE_METADATA[variable]
-        if level is not None and variable in OCEAN_DEPTH_VARIABLES:
-            long_name = f"{long_name} at {level / 100.0:g} m"
-        elif level is not None:
-            long_name = f"{long_name} at {level} hPa"
-        result[str(channel)] = {
-            "long_name": long_name,
-            "source_name": SOURCE_NAMES[variable],
-            "source_units": SOURCE_UNITS[variable],
-            "units": units,
-            "scale_factor": float(std_values[index]),
-            "add_offset": float(mean_values[index]),
-            "scale_offset_formula": "preprocessed_value = normalized_value * scale_factor + add_offset",
-            **channel_level_metadata(variable, level),
-            "variable_type": (
-                "derived" if variable in DERIVED
-                else "accumulated" if variable in RADIATION or variable == "tp"
-                else "static" if variable == "wmb"
-                else "instantaneous"
-            ),
-            "preprocessing": preprocessing_metadata(
-                str(channel), variable, radiation_seconds=radiation_seconds
-            ),
-        }
-    return result
+    return target, tuple(renamed.index(name) for name in target)
 
 
 CF_TIME = re.compile(
@@ -410,7 +208,10 @@ def metadata_file(path: Path) -> dict[str, Any]:
         return json.loads(v3.read_text(encoding="utf-8"))
     v2 = path / ".zattrs"
     if v2.is_file():
-        return {"attributes": json.loads(v2.read_text(encoding="utf-8")), "zarr_format": 2}
+        return {
+            "attributes": json.loads(v2.read_text(encoding="utf-8")),
+            "zarr_format": 2,
+        }
     raise FileNotFoundError(f"no Zarr root metadata found in {path}")
 
 
@@ -436,9 +237,13 @@ def correct_statistics(
     for pattern, factor in multiply.items():
         if not np.isfinite(factor) or factor <= 0:
             raise ValueError(f"invalid statistics multiplier for {pattern}: {factor}")
-        indices = [index for index, name in enumerate(channels) if fnmatchcase(name, pattern)]
+        indices = [
+            index for index, name in enumerate(channels) if fnmatchcase(name, pattern)
+        ]
         if not indices:
-            raise ValueError(f"statistics multiplier pattern matched no channels: {pattern}")
+            raise ValueError(
+                f"statistics multiplier pattern matched no channels: {pattern}"
+            )
         if factor == 1:
             continue
         mean[indices] *= np.float32(factor)
@@ -452,12 +257,38 @@ class LegacyZarrSource:
 
     def __post_init__(self) -> None:
         self.path = self.profile.input
+        self.schema, _ = load_schema(self.profile.target_schema)
+        if (
+            self.schema.zarr_format != 3
+            or self.schema.arrays["data"].dtype != "float16"
+        ):
+            raise ValueError("legacy refresh requires a Zarr v3 float16 target schema")
+        if self.profile.cadence_hours != self.schema.variant.cadence_hours:
+            raise ValueError("profile cadence_hours differs from target schema")
+        windows = {
+            step["accumulation_window_seconds"]
+            for channel in self.schema.product.channels
+            for step in channel.preprocessing
+            if step["operation"] == "divide"
+        }
+        if windows and windows != {self.profile.radiation_seconds}:
+            raise ValueError("profile radiation_seconds differs from target schema")
         if not self.path.is_dir():
             raise FileNotFoundError(self.path)
         if self.profile.already_refreshed not in {"error", "force"}:
             raise ValueError("already_refreshed must be either 'error' or 'force'")
-        previous_manifest = self.path / "refresh_manifest.json"
-        if previous_manifest.is_file() and self.profile.already_refreshed != "force":
+        previous_manifest = next(
+            (
+                path
+                for path in (
+                    _manifest_path(self.path, "refresh_manifest.json"),
+                    self.path / "refresh_manifest.json",
+                )
+                if path.is_file()
+            ),
+            None,
+        )
+        if previous_manifest is not None and self.profile.already_refreshed != "force":
             raise ValueError(
                 f"source already contains a refresh manifest: {previous_manifest}; "
                 "set already_refreshed='force' only after verifying the source"
@@ -474,9 +305,13 @@ class LegacyZarrSource:
         self.lon_array = zarr.open_array(str(self.path / "lon"), mode="r")
         self.time_array = zarr.open_array(str(self.path / "time"), mode="r")
 
-        self.source_channels = tuple(_text(value) for value in self.channel_array[:].tolist())
+        self.source_channels = tuple(
+            _text(value) for value in self.channel_array[:].tolist()
+        )
         self.channels, self.channel_indices = canonicalize_channels(
-            self.source_channels, self.profile.channel_rename
+            self.source_channels,
+            self.profile.channel_rename,
+            self.schema.product.channel_names,
         )
         self.lat_source = np.asarray(self.lat_array[:], dtype="f8")
         self.lon = np.asarray(self.lon_array[:], dtype="f8")
@@ -489,8 +324,17 @@ class LegacyZarrSource:
         self.mean_source = mean_source[order]
         self.std_source = std_source[order]
         self.mean, self.std = self._correct_statistics()
-        self.flip_latitude = bool(self.lat_source[0] < self.lat_source[-1])
-        self.lat = self.lat_source[::-1].copy() if self.flip_latitude else self.lat_source.copy()
+        if not (
+            np.all(np.diff(self.lat_source) > 0) or np.all(np.diff(self.lat_source) < 0)
+        ):
+            raise ValueError("source latitude must be strictly monotonic")
+        ascending = self.schema.variant.grid.latitude_direction == "south-to-north"
+        self.flip_latitude = bool(self.lat_source[0] < self.lat_source[-1]) != ascending
+        self.lat = (
+            self.lat_source[::-1].copy()
+            if self.flip_latitude
+            else self.lat_source.copy()
+        )
         self.mask = self._read_mask()
         if self.flip_latitude:
             self.mask = self.mask[::-1].copy()
@@ -511,15 +355,26 @@ class LegacyZarrSource:
             if backend == "nc" and (self.path / f"{statistic}.nc").is_file():
                 dataset = xr.open_dataset(self.path / f"{statistic}.nc")
                 try:
-                    variable = statistic if statistic in dataset.data_vars else next(
-                        iter(dataset.data_vars)
+                    variable = (
+                        statistic
+                        if statistic in dataset.data_vars
+                        else next(iter(dataset.data_vars))
                     )
-                    values = np.asarray(dataset[variable].values, dtype="f4").reshape(-1)
+                    values = np.asarray(dataset[variable].values, dtype="f4").reshape(
+                        -1
+                    )
                     if "channel" in dataset.coords:
-                        labels = [_text(value) for value in dataset.channel.values.tolist()]
-                        if len(labels) == len(values) and set(labels) == set(self.source_channels):
+                        labels = [
+                            _text(value) for value in dataset.channel.values.tolist()
+                        ]
+                        if len(labels) == len(values) and set(labels) == set(
+                            self.source_channels
+                        ):
                             mapping = dict(zip(labels, values, strict=True))
-                            values = np.asarray([mapping[name] for name in self.source_channels], dtype="f4")
+                            values = np.asarray(
+                                [mapping[name] for name in self.source_channels],
+                                dtype="f4",
+                            )
                     return values
                 finally:
                     dataset.close()
@@ -554,6 +409,7 @@ class LegacyZarrSource:
             self.profile.statistics_divide,
             self.profile.statistics_multiply,
         )
+
     def _read_mask(self) -> np.ndarray:
         spec = self.profile.mask
         kind = str(spec.get("kind", ""))
@@ -565,7 +421,12 @@ class LegacyZarrSource:
             dataset = xr.open_dataset(path)
             try:
                 variable = str(spec["variable"])
-                values = np.asarray(dataset[variable].values)
+                field = dataset[variable].squeeze(drop=True).transpose("lat", "lon")
+                lat_index = index_for_coordinate(dataset.lat.values, self.lat_source)
+                lon_index = index_for_coordinate(
+                    dataset.lon.values, self.lon, longitude=True
+                )
+                values = np.asarray(field.values)[lat_index, :][:, lon_index]
             finally:
                 dataset.close()
         elif kind == "const_channel":
@@ -576,7 +437,12 @@ class LegacyZarrSource:
                 field = dataset[variable]
                 if "channel" not in field.dims:
                     raise ValueError(f"{path}: {variable} has no channel dimension")
-                values = np.asarray(field.sel(channel=channel).values)
+                field = field.sel(channel=channel).transpose("lat", "lon")
+                lat_index = index_for_coordinate(dataset.lat.values, self.lat_source)
+                lon_index = index_for_coordinate(
+                    dataset.lon.values, self.lon, longitude=True
+                )
+                values = np.asarray(field.values)[lat_index, :][:, lon_index]
             finally:
                 dataset.close()
         else:
@@ -603,15 +469,27 @@ class LegacyZarrSource:
         expected = (len(self.times), len(self.channels), len(self.lat), len(self.lon))
         if tuple(self.data.shape) != expected:
             raise ValueError(f"data shape {self.data.shape} != coordinates {expected}")
-        if self.profile.expected_channels is not None and len(self.channels) != self.profile.expected_channels:
+        if (
+            self.profile.expected_channels is not None
+            and len(self.channels) != self.profile.expected_channels
+        ):
             raise ValueError("unexpected channel count")
-        if self.profile.expected_grid is not None and tuple(self.data.shape[-2:]) != self.profile.expected_grid:
+        if (
+            self.profile.expected_grid is not None
+            and tuple(self.data.shape[-2:]) != self.profile.expected_grid
+        ):
             raise ValueError("unexpected grid shape")
         if len(set(self.channels)) != len(self.channels):
             raise ValueError("channel labels are not unique")
-        if self.mean.shape != (len(self.channels),) or self.std.shape != (len(self.channels),):
+        if self.mean.shape != (len(self.channels),) or self.std.shape != (
+            len(self.channels),
+        ):
             raise ValueError("mean/std are not aligned with channels")
-        if not np.isfinite(self.mean).all() or not np.isfinite(self.std).all() or np.any(self.std <= 0):
+        if (
+            not np.isfinite(self.mean).all()
+            or not np.isfinite(self.std).all()
+            or np.any(self.std <= 0)
+        ):
             raise ValueError("mean/std contain invalid values")
         if len(self.times) > 1:
             differences = np.diff(self.times)
@@ -621,8 +499,21 @@ class LegacyZarrSource:
                 raise ValueError(f"time cadence mismatch at indices {bad}")
         if not np.all(np.diff(self.lon) > 0):
             raise ValueError("longitude must be strictly increasing")
-        if not np.all(np.diff(self.lat) < 0):
-            raise ValueError("target latitude must be strictly decreasing")
+        latitude, longitude = self.schema.variant.grid.coordinates()
+        if not np.array_equal(self.lat.astype("f4"), latitude) or not np.array_equal(
+            self.lon.astype("f4"), longitude
+        ):
+            raise ValueError(
+                "source grid differs from target schema after latitude alignment"
+            )
+        if not np.array_equal(self.times, self.schema.expected_times()):
+            raise ValueError("source time coverage differs from target schema")
+        build_standard_channel_info(
+            self.schema.product,
+            mean=self.mean,
+            std=self.std,
+            channel_metadata=self.schema.channel_metadata,
+        )
         if not np.isin(self.mask, (0, 1)).all():
             raise ValueError("mask is not binary")
 
@@ -638,6 +529,8 @@ class LegacyZarrSource:
     def fingerprint(self) -> str:
         payload = {
             "profile": self.profile.serializable(),
+            "target_schema_sha256": self.schema.schema_sha256,
+            "writer_zarr_format": 3,
             "shape": tuple(int(v) for v in self.data.shape),
             "chunks": tuple(int(v) for v in self.data.chunks),
             "source_channels": self.source_channels,
@@ -674,8 +567,14 @@ class LegacyZarrSource:
             "channels": list(self.channels),
             "channel_source_indices": list(self.channel_indices),
             "grid": [len(self.lat), len(self.lon)],
-            "source_latitude_order": "ascending" if self.flip_latitude else "descending",
-            "target_latitude_order": "descending",
+            "source_latitude_order": "ascending"
+            if self.lat_source[0] < self.lat_source[-1]
+            else "descending",
+            "target_latitude_order": self.schema.variant.grid.latitude_direction,
+            "target_schema": str(self.schema.schema_path),
+            "target_schema_sha256": self.schema.schema_sha256,
+            "target_dataset_id": self.schema.dataset_id,
+            "target_data_revision": self.schema.data_revision,
             "time_count": len(self.times),
             "time_start": str(self.times[0]),
             "time_end": str(self.times[-1]),
@@ -687,8 +586,6 @@ class LegacyZarrSource:
         }
 
 
-SCHEMA_VERSION = "2.0"
-CONTENT_VERSION = "v3"
 MASK_CHANNELS = ("land_mask", "sea_mask")
 DATA_ATTRIBUTES = {
     "_ARRAY_DIMENSIONS": ["time", "channel", "lat", "lon"],
@@ -747,24 +644,14 @@ MASK_CHANNEL_ATTRIBUTES = {
 }
 
 
-def codec() -> Blosc:
-    return Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
-
-
-def channel_info(
-    channels: Sequence[str],
-    mean: np.ndarray,
-    std: np.ndarray,
-    radiation_seconds: int | None,
-) -> dict[str, dict[str, Any]]:
-    return build_channel_info(channels, mean, std, radiation_seconds)
+def codec() -> zarr.codecs.BloscCodec:
+    return zarr.codecs.BloscCodec(cname="zstd", clevel=5, shuffle="bitshuffle")
 
 
 def create_refreshed_store(
     path: Path,
     *,
-    dataset_id: str,
-    data_revision: str,
+    schema: DatasetSchema,
     times: np.ndarray,
     channels: Sequence[str],
     lat: np.ndarray,
@@ -772,97 +659,107 @@ def create_refreshed_store(
     mean: np.ndarray,
     std: np.ndarray,
     land_mask: np.ndarray,
-    radiation_seconds: int | None,
 ) -> zarr.Group:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    group = zarr.open_group(str(path), mode="w", zarr_format=2)
-    group.attrs.update(
-        {
-            "dataset_id": dataset_id,
-            "schema_version": SCHEMA_VERSION,
-            "content_version": CONTENT_VERSION,
-            "data_revision": data_revision,
-            "geospatial_lat_range": [float(np.min(lat)), float(np.max(lat))],
-            "geospatial_lon_range": [float(np.min(lon)), float(np.max(lon))],
-        }
+    """Write native v3 metadata and dense frame chunks from a selected standard."""
+    if schema.zarr_format != 3 or tuple(channels) != schema.product.channel_names:
+        raise ValueError("refresh output must use the exact Zarr v3 target channels")
+    mean, std = np.asarray(mean, dtype="f4"), np.asarray(std, dtype="f4")
+    info = build_standard_channel_info(
+        schema.product,
+        mean=mean,
+        std=std,
+        channel_metadata=schema.channel_metadata,
     )
-    channel_count = len(channels)
-    ny, nx = len(lat), len(lon)
-    group.create_array(
+    path.parent.mkdir(parents=True, exist_ok=True)
+    group = zarr.open_group(str(path), mode="w", zarr_format=3)
+    group.attrs.update(
+        dataset_id=schema.dataset_id,
+        schema_version=schema.schema_version,
+        content_version=schema.content_version,
+        data_revision=schema.data_revision,
+        geospatial_lat_range=[float(np.min(lat)), float(np.max(lat))],
+        geospatial_lon_range=[float(np.min(lon)), float(np.max(lon))],
+    )
+    count, ny, nx = len(channels), len(lat), len(lon)
+    times_ns = np.asarray(times).astype("datetime64[ns]")
+
+    def create(name, *, attributes, **kwargs):
+        attrs = {
+            key: value
+            for key, value in attributes.items()
+            if key != "_ARRAY_DIMENSIONS"
+        }
+        return group.create_array(
+            name,
+            dimension_names=schema.arrays[name].dimensions,
+            attributes=attrs,
+            compressors=[codec()],
+            chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
+            config={"write_empty_chunks": True},
+            **kwargs,
+        )
+
+    create(
         "data",
-        shape=(len(times), channel_count, ny, nx),
-        chunks=(1, channel_count, ny, nx),
+        shape=(len(times_ns), count, ny, nx),
+        chunks=(1, count, ny, nx),
         dtype="f2",
         fill_value=np.nan,
-        compressor=codec(),
-        chunk_key_encoding={"name": "v2", "configuration": {"separator": "."}},
-        attributes=DATA_ATTRIBUTES,
+        attributes={**DATA_ATTRIBUTES, **schema.data_attributes},
     )
-    group.create_array(
+    channel_meta = schema.channel_metadata
+    create(
         "channel",
         data=np.asarray(channels, dtype=str),
-        chunks=(channel_count,),
+        chunks=(count,),
         fill_value="",
         attributes={
-            "_ARRAY_DIMENSIONS": ["channel"],
             "long_name": "Weather variable channel code",
-            "channel_info_schema_version": "1.0",
-            "channel_info": channel_info(channels, mean, std, radiation_seconds),
+            channel_meta.version_attribute: channel_meta.version,
+            channel_meta.attribute: info,
         },
     )
-    group.create_array(
+    create(
         "lat",
         data=np.asarray(lat, dtype="f4"),
         chunks=(ny,),
         fill_value=np.nan,
         attributes=LAT_ATTRIBUTES,
     )
-    group.create_array(
+    create(
         "lon",
         data=np.asarray(lon, dtype="f4"),
         chunks=(nx,),
         fill_value=np.nan,
         attributes=LON_ATTRIBUTES,
     )
-    times_ns = np.asarray(times).astype("datetime64[ns]")
-    group.create_array(
+    create(
         "time",
         data=times_ns,
         chunks=times_ns.shape,
         fill_value=np.datetime64("NaT", "ns"),
         attributes=TIME_ATTRIBUTES,
     )
-    group.create_array(
+    create(
         "mean",
-        data=np.asarray(mean, dtype="f4"),
-        chunks=(channel_count,),
-        compressor=codec(),
+        data=mean,
+        chunks=(count,),
         fill_value=np.nan,
         attributes=MEAN_ATTRIBUTES,
     )
-    group.create_array(
-        "std",
-        data=np.asarray(std, dtype="f4"),
-        chunks=(channel_count,),
-        compressor=codec(),
-        fill_value=np.nan,
-        attributes=STD_ATTRIBUTES,
+    create(
+        "std", data=std, chunks=(count,), fill_value=np.nan, attributes=STD_ATTRIBUTES
     )
-    group.create_array(
+    create(
         "mask_channel",
-        data=np.asarray(MASK_CHANNELS, dtype=str),
+        data=np.asarray(schema.product.mask.channels, dtype=str),
         chunks=(2,),
         fill_value="",
         attributes=MASK_CHANNEL_ATTRIBUTES,
     )
     masks = np.stack((land_mask.astype("u1"), np.uint8(1) - land_mask.astype("u1")))
-    group.create_array(
-        "mask",
-        data=masks,
-        chunks=(1, ny, nx),
-        compressor=codec(),
-        fill_value=np.uint8(0),
-        attributes=MASK_ATTRIBUTES,
+    create(
+        "mask", data=masks, chunks=(1, ny, nx), fill_value=0, attributes=MASK_ATTRIBUTES
     )
     return group
 
@@ -887,7 +784,10 @@ def default_sample_indices(size: int) -> list[int]:
 
 
 def _strings(values: np.ndarray) -> list[str]:
-    return [value.decode() if isinstance(value, bytes) else str(value) for value in values.tolist()]
+    return [
+        value.decode() if isinstance(value, bytes) else str(value)
+        for value in values.tolist()
+    ]
 
 
 def validate_refreshed_store(
@@ -897,12 +797,52 @@ def validate_refreshed_store(
     *,
     full_data_check: bool = False,
 ) -> dict[str, Any]:
+    verify_schema_unchanged(source.schema)
+    if metadata_file(path).get("zarr_format") != 3:
+        raise ValueError("target storage must be Zarr v3")
     group = zarr.open_group(str(path), mode="r", use_consolidated=False)
     if set(group.keys()) != EXPECTED_CHILDREN:
         raise ValueError(f"unexpected root nodes: {sorted(group.keys())}")
     attrs = dict(group.attrs)
-    if attrs.get("schema_version") != SCHEMA_VERSION or attrs.get("content_version") != CONTENT_VERSION:
-        raise ValueError("root schema/content version mismatch")
+    schema = source.schema
+    for key, expected in {
+        "dataset_id": schema.dataset_id,
+        "data_revision": schema.data_revision,
+        "schema_version": schema.schema_version,
+        "content_version": schema.content_version,
+    }.items():
+        if attrs.get(key) != expected:
+            raise ValueError(f"root {key} differs from target schema")
+    for name, definition in schema.arrays.items():
+        array = group[name]
+        raw = metadata_file(path / name)
+        if tuple(raw.get("dimension_names", ())) != definition.dimensions:
+            raise ValueError(f"target {name} dimension_names differ from target schema")
+        if definition.dtype == "string":
+            valid_dtype = array.dtype.kind == "U"
+        else:
+            valid_dtype = array.dtype == np.dtype(definition.dtype)
+        if not valid_dtype:
+            raise ValueError(f"target {name} dtype differs from target schema")
+    for key, expected in schema.data_attributes.items():
+        if group["data"].attrs.get(key) != expected:
+            raise ValueError(f"target data attribute differs: {key}")
+    channel_meta = schema.channel_metadata
+    if (
+        group["channel"].attrs.get(channel_meta.version_attribute)
+        != channel_meta.version
+    ):
+        raise ValueError("target channel metadata version differs from target schema")
+    expected_info = build_standard_channel_info(
+        schema.product,
+        mean=source.mean,
+        std=source.std,
+        channel_metadata=channel_meta,
+    )
+    if group["channel"].attrs.get(channel_meta.attribute) != expected_info:
+        raise ValueError(
+            "target channel metadata differs from target schema/statistics"
+        )
     expected_shape = (
         len(source_indices),
         len(source.channels),
@@ -914,7 +854,7 @@ def validate_refreshed_store(
     if group["data"].dtype != np.dtype("f2"):
         raise ValueError("target data dtype is not float16")
     if tuple(group["data"].chunks) != (1, *expected_shape[1:]):
-        raise ValueError("target data chunks do not follow the v2 contract")
+        raise ValueError("target data chunks must contain one complete frame")
     if _strings(group["channel"][:]) != list(source.channels):
         raise ValueError("channel values/order changed")
     np.testing.assert_array_equal(group["lat"][:], source.lat.astype("f4"))
@@ -937,10 +877,17 @@ def validate_refreshed_store(
     np.testing.assert_array_equal(masks[0], source.mask)
 
     output_indices: Iterable[int]
-    output_indices = range(len(source_indices)) if full_data_check else default_sample_indices(len(source_indices))
+    output_indices = (
+        range(len(source_indices))
+        if full_data_check
+        else default_sample_indices(len(source_indices))
+    )
     checked = []
     radiation_report: dict[str, Any] = {}
     for output_index in output_indices:
+        chunk = path / "data" / "c" / str(output_index) / "0" / "0" / "0"
+        if not chunk.is_file():
+            raise ValueError(f"target main-data chunk is physically missing: {chunk}")
         source_index = source_indices[output_index]
         expected = source.read_data(source_index)
         actual = np.asarray(group["data"][output_index], dtype="f2")
@@ -971,18 +918,30 @@ def validate_refreshed_store(
                 )
         radiation_report[name] = samples
 
+    verify_schema_unchanged(schema)
     return {
         "path": str(path),
         "shape": list(expected_shape),
         "checked_data_chunks": checked,
         "full_data_check": full_data_check,
+        "zarr_format": 3,
+        "config_id": schema.config_id,
+        "template_version": schema.template_version,
+        "schema_sha256": schema.schema_sha256,
         "radiation_physical_samples": radiation_report,
         "status": "ok",
     }
 
 
+def _manifest_path(path: Path, filename: str) -> Path:
+    """Keep execution reports beside, rather than inside, the standard store."""
+    return path.with_name(path.name + "." + filename)
+
+
 def read_manifest(path: Path) -> dict[str, Any]:
-    manifest = path / "refresh_manifest.json"
+    manifest = _manifest_path(path, "refresh_manifest.json")
+    if not manifest.is_file():
+        manifest = path / "refresh_manifest.json"
     if not manifest.is_file():
         raise FileNotFoundError(manifest)
     return json.loads(manifest.read_text(encoding="utf-8"))
@@ -1031,6 +990,15 @@ def build_refresh_plan(
     return {
         "input": str(source.path),
         "output": str(destination),
+        "target": {
+            "schema": str(source.schema.schema_path),
+            "schema_sha256": source.schema.schema_sha256,
+            "config_id": source.schema.config_id,
+            "template_version": source.schema.template_version,
+            "dataset_id": source.schema.dataset_id,
+            "data_revision": source.schema.data_revision,
+            "zarr_format": 3,
+        },
         "source_indices": {
             "start": indices[0],
             "end": indices[-1],
@@ -1065,9 +1033,15 @@ def refresh_legacy_zarr(
         raise ValueError("workers must be positive")
     source = LegacyZarrSource(profile)
     indices = selection_indices(len(source.times), start, count)
-    final = output_path(profile, output_root, pilot=pilot, start=start, count=len(indices))
-    if final.resolve() == source.path.resolve():
-        raise ValueError("output path must not equal the read-only source path")
+    final = output_path(
+        profile, output_root, pilot=pilot, start=start, count=len(indices)
+    )
+    if final.resolve().is_relative_to(
+        source.path.resolve()
+    ) or source.path.resolve().is_relative_to(final.resolve()):
+        raise ValueError("output must not overlap the read-only source path")
+    if final.exists() and not overwrite:
+        raise FileExistsError(f"output exists: {final}")
     staging = final.with_name("." + final.name + ".staging")
     state_path = final.with_name("." + final.name + ".refresh_state.json")
     fingerprint_payload = {
@@ -1090,13 +1064,15 @@ def refresh_legacy_zarr(
         if state.get("fingerprint") != fingerprint:
             raise RuntimeError("staging fingerprint differs from current source/config")
         completed = int(state.get("completed", 0))
+        if not 0 <= completed <= len(indices):
+            raise ValueError("staging completion count is outside the selected range")
+        if metadata_file(staging).get("zarr_format") != 3:
+            raise ValueError("cannot resume non-v3 staging; use a separate output")
         group = zarr.open_group(str(staging), mode="r+", use_consolidated=False)
     else:
-        revision = datetime.now(timezone.utc).strftime("%Y%m%d")
         group = create_refreshed_store(
             staging,
-            dataset_id=final.name.removesuffix(".zarr"),
-            data_revision=revision,
+            schema=source.schema,
             times=source.times[indices],
             channels=source.channels,
             lat=source.lat,
@@ -1104,7 +1080,6 @@ def refresh_legacy_zarr(
             mean=source.mean,
             std=source.std,
             land_mask=source.mask,
-            radiation_seconds=profile.radiation_seconds,
         )
         atomic_json(
             state_path,
@@ -1115,7 +1090,10 @@ def refresh_legacy_zarr(
                 "started_utc": datetime.now(timezone.utc).isoformat(),
             },
         )
-    target = group["data"]
+    # open_array may ignore creation-only kwargs for existing arrays. Set the
+    # opening default in a bounded context so resumed all-fill frames are stored.
+    with zarr.config.set({"array.write_empty_chunks": True}):
+        target = zarr.open_array(str(staging / "data"), mode="r+")
     session_start = completed
     started = time.monotonic()
 
@@ -1162,32 +1140,47 @@ def refresh_legacy_zarr(
     manifest = {
         "tool": "data-format-refresh",
         "profile": profile.serializable(),
+        "target": build_refresh_plan(source, final, indices)["target"],
         "source_fingerprint": source.fingerprint(),
-        "source_indices": {"start": indices[0], "end": indices[-1], "count": len(indices)},
-        "source_time": {"start": str(source.times[indices[0]]), "end": str(source.times[indices[-1]])},
+        "source_indices": {
+            "start": indices[0],
+            "end": indices[-1],
+            "count": len(indices),
+        },
+        "source_time": {
+            "start": str(source.times[indices[0]]),
+            "end": str(source.times[indices[-1]]),
+        },
         "transformations": {
             "normalized_data": "unchanged",
             "latitude_reversed": source.flip_latitude,
             "statistics_divide": profile.statistics_divide,
             "statistics_multiply": profile.statistics_multiply,
             "channel_rename": profile.channel_rename,
-            "channel_order": "template_intersection",
+            "channel_order": "target_schema",
             "channel_source_indices": list(source.channel_indices),
             "codec": "blosc-zstd-clevel5-bitshuffle",
         },
         "validation": validation,
         "completed_utc": datetime.now(timezone.utc).isoformat(),
     }
-    atomic_json(staging / "refresh_manifest.json", manifest)
-    state_path.unlink(missing_ok=True)
     if final.exists():
         if not overwrite:
             raise FileExistsError(f"output exists: {final}")
         backup = final.with_name(
-            final.name + ".backup." + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            final.name
+            + ".backup."
+            + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         )
         os.replace(final, backup)
+        for filename in ("refresh_manifest.json", "auxiliary_refresh_manifest.json"):
+            old_manifest = _manifest_path(final, filename)
+            if old_manifest.exists():
+                os.replace(old_manifest, _manifest_path(backup, filename))
     os.replace(staging, final)
+    validation["path"] = str(final)
+    atomic_json(_manifest_path(final, "refresh_manifest.json"), manifest)
+    state_path.unlink(missing_ok=True)
     return final, manifest
 
 
@@ -1259,7 +1252,9 @@ def const_data_variable(dataset: xr.Dataset) -> str:
     return matches[0]
 
 
-def build_const(source_file: Path, target_store: Path) -> tuple[xr.Dataset, dict[str, Any]]:
+def build_const(
+    source_file: Path, target_store: Path
+) -> tuple[xr.Dataset, dict[str, Any]]:
     target_lat = read_zarr_coordinate(target_store, "lat").astype("f8")
     target_lon = read_zarr_coordinate(target_store, "lon").astype("f8")
     source = xr.open_dataset(source_file, decode_cf=False)
@@ -1304,7 +1299,10 @@ def build_const(source_file: Path, target_store: Path) -> tuple[xr.Dataset, dict
     finally:
         source.close()
 
-def build_weight(source_file: Path, target_store: Path) -> tuple[np.ndarray, dict[str, Any]]:
+
+def build_weight(
+    source_file: Path, target_store: Path
+) -> tuple[np.ndarray, dict[str, Any]]:
     target_lat = read_zarr_coordinate(target_store, "lat").astype("f8")
     source = xr.open_dataset(source_file, decode_cf=False)
     try:
@@ -1344,9 +1342,7 @@ def build_weight_npy(
     values = vector[lat_index].reshape(1, -1, 1).astype("f4")
     return values, {
         "source_format": "npy",
-        "latitude_reordered": not np.array_equal(
-            lat_index, np.arange(lat_index.size)
-        ),
+        "latitude_reordered": not np.array_equal(lat_index, np.arange(lat_index.size)),
         "shape": list(values.shape),
     }
 
@@ -1369,7 +1365,9 @@ def source_spatial_coordinates(source_root: Path) -> tuple[np.ndarray, np.ndarra
     )
 
 
-def build_mask(source_file: Path, source_root: Path, target_store: Path) -> tuple[np.ndarray, dict[str, Any]]:
+def build_mask(
+    source_file: Path, source_root: Path, target_store: Path
+) -> tuple[np.ndarray, dict[str, Any]]:
     values = np.asarray(np.load(source_file, allow_pickle=False)).squeeze()
     source_lat, source_lon = source_spatial_coordinates(source_root)
     target_lat = read_zarr_coordinate(target_store, "lat")
@@ -1382,12 +1380,8 @@ def build_mask(source_file: Path, source_root: Path, target_store: Path) -> tupl
     lon_index = index_for_coordinate(source_lon, target_lon, longitude=True)
     values = values[lat_index, :][:, lon_index].astype(bool)
     return values, {
-        "latitude_reordered": not np.array_equal(
-            lat_index, np.arange(lat_index.size)
-        ),
-        "longitude_reordered": not np.array_equal(
-            lon_index, np.arange(lon_index.size)
-        ),
+        "latitude_reordered": not np.array_equal(lat_index, np.arange(lat_index.size)),
+        "longitude_reordered": not np.array_equal(lon_index, np.arange(lon_index.size)),
         "shape": list(values.shape),
     }
 
@@ -1434,6 +1428,7 @@ def build_mask_netcdf(
     finally:
         dataset.close()
 
+
 def build_land_mask_from_const(
     source_file: Path, target_store: Path
 ) -> tuple[np.ndarray, dict[str, Any]]:
@@ -1477,7 +1472,7 @@ def write_embedded_masks(target_store: Path, land: np.ndarray) -> None:
     try:
         array[:] = replacement
         if not np.array_equal(np.asarray(array[:]), replacement):
-            raise IOError("embedded mask verification failed after write")
+            raise OSError("embedded mask verification failed after write")
     except Exception:
         array[:] = original
         raise
@@ -1494,9 +1489,13 @@ def choose_output(output_root: Path, names: list[str]) -> Path | None:
 def verify_target_store(path: Path) -> None:
     if path.name.startswith(".") or path.name.endswith(".staging"):
         raise ValueError(f"refusing to modify staging directory: {path}")
-    for name in (".zgroup", "data", "lat", "lon", "channel"):
+    for name in ("zarr.json", "data", "lat", "lon", "channel"):
         if not (path / name).exists():
             raise ValueError(f"not a completed refreshed store; missing {name}: {path}")
+    if metadata_file(path).get("zarr_format") != 3:
+        raise ValueError(
+            f"auxiliary migration requires a refreshed Zarr v3 store: {path}"
+        )
 
 
 def migrate_auxiliary_files(
@@ -1516,6 +1515,21 @@ def migrate_auxiliary_files(
             raise FileNotFoundError(message)
         return {"dataset": key, "status": "skipped", "reason": message}
     verify_target_store(target)
+    schema = (
+        load_schema(Path(spec["target_schema"]))[0]
+        if spec.get("target_schema")
+        else None
+    )
+    definitions = (
+        {item.role: item for item in schema.variant.auxiliaries} if schema else {}
+    )
+    if schema is not None:
+        if metadata_file(target)["attributes"].get("dataset_id") != schema.dataset_id:
+            raise ValueError("auxiliary target identity differs from target schema")
+        for name, expected in zip(
+            ("lat", "lon"), schema.variant.grid.coordinates(), strict=True
+        ):
+            np.testing.assert_array_equal(read_zarr_coordinate(target, name), expected)
     report: dict[str, Any] = {
         "dataset": key,
         "source": str(source),
@@ -1527,6 +1541,17 @@ def migrate_auxiliary_files(
     const_source = source / "const.nc"
     if const_source.is_file():
         dataset, details = build_const(const_source, target)
+        definition = definitions.get("const")
+        if definition is not None and definition.channels:
+            channels = tuple(dataset.channel.values.tolist())
+            if len(set(channels)) != len(channels) or set(channels) != set(
+                definition.channels
+            ):
+                dataset.close()
+                raise ValueError("legacy const channels differ from target schema")
+            dataset = dataset.sel(channel=list(definition.channels))
+            details["target_channels"] = list(definition.channels)
+            details["channel_policy"] = "target schema"
         destination = target / "const.nc"
         if not dry_run:
             atomic_netcdf(destination, dataset, overwrite)
@@ -1536,6 +1561,12 @@ def migrate_auxiliary_files(
         report["artifacts"]["const.nc"] = details
     else:
         report["artifacts"]["const.nc"] = {"status": "source_missing_skipped"}
+        if (
+            strict
+            and definitions.get("const") is not None
+            and definitions["const"].required
+        ):
+            raise FileNotFoundError("required legacy const.nc source is missing")
 
     weight_nc_source = source / "weight.nc"
     weight_npy_source = source / "weight.npy"
@@ -1543,23 +1574,48 @@ def migrate_auxiliary_files(
         weight_source = weight_nc_source
         values, details = build_weight(weight_source, target)
         details["source_format"] = "netcdf"
-        destination = target / "weight.npy"
-        if not dry_run:
-            atomic_npy(destination, values, overwrite)
-            details["sha256"] = sha256(destination)
-        details.update({"source": str(weight_source), "destination": str(destination)})
-        report["artifacts"]["weight.npy"] = details
     elif weight_npy_source.is_file():
         weight_source = weight_npy_source
         values, details = build_weight_npy(weight_source, source, target)
-        destination = target / "weight.npy"
-        if not dry_run:
-            atomic_npy(destination, values, overwrite)
-            details["sha256"] = sha256(destination)
-        details.update({"source": str(weight_source), "destination": str(destination)})
-        report["artifacts"]["weight.npy"] = details
     else:
         report["artifacts"]["weight.npy"] = {"status": "source_missing_skipped"}
+
+    if weight_nc_source.is_file() or weight_npy_source.is_file():
+        definition = definitions.get("weight")
+        if definition is not None and (
+            not np.isfinite(values).all()
+            or np.any(values < -definition.weight_nonnegative_atol)
+            or (definition.require_positive_value and not np.any(values > 0))
+        ):
+            raise ValueError(
+                "legacy weights do not satisfy the target schema tolerance"
+            )
+        filename = definition.filename if definition is not None else "weight.npy"
+        destination = target / filename
+        if not dry_run:
+            if definition is not None and definition.format == "netcdf":
+                latitude = read_zarr_coordinate(target, "lat")
+                with xr.Dataset(
+                    {
+                        str(details.get("source_variable", "weight")): (
+                            ("lat",),
+                            values[0, :, 0],
+                        )
+                    },
+                    coords={"lat": latitude},
+                ) as dataset:
+                    atomic_netcdf(destination, dataset, overwrite)
+            else:
+                atomic_npy(destination, values, overwrite)
+            details["sha256"] = sha256(destination)
+        details.update({"source": str(weight_source), "destination": str(destination)})
+        report["artifacts"][filename] = details
+    elif (
+        strict
+        and definitions.get("weight") is not None
+        and definitions["weight"].required
+    ):
+        raise FileNotFoundError("required legacy weight source is missing")
 
     mask_npy_source = source / "mask.npy"
     mask_nc_source = source / "mask.nc"
@@ -1592,9 +1648,7 @@ def migrate_auxiliary_files(
             and const_source.is_file()
             and (target / "mask").is_dir()
         ):
-            land, embedded_details = build_land_mask_from_const(
-                const_source, target
-            )
+            land, embedded_details = build_land_mask_from_const(const_source, target)
             if not dry_run:
                 write_embedded_masks(target, land)
                 embedded_details["verified"] = True
@@ -1611,8 +1665,10 @@ def migrate_auxiliary_files(
         report["artifacts"]["mask.npy"] = details
 
     report["status"] = "planned" if dry_run else "ok"
+    if schema is not None:
+        verify_schema_unchanged(schema)
     if not dry_run:
-        manifest = target / "auxiliary_refresh_manifest.json"
+        manifest = _manifest_path(target, "auxiliary_refresh_manifest.json")
         manifest.write_text(
             json.dumps(
                 {
@@ -1708,6 +1764,7 @@ def main(argv: list[str] | None = None) -> None:
                 {
                     "source": str(profile.input),
                     "outputs": [args.target_name or profile.output_name],
+                    "target_schema": str(profile.target_schema),
                     "refresh_embedded_mask": args.refresh_embedded_mask,
                 },
                 args.output_root,

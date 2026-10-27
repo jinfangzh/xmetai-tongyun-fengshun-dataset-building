@@ -4,11 +4,13 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import legacy_zarr_refresh as refresh
 import numpy as np
 import pytest
+import yaml
 import zarr
 from legacy_zarr_refresh import (
     LegacyZarrSource,
@@ -20,6 +22,7 @@ from legacy_zarr_refresh import (
     select_profiles,
 )
 
+from datakit.schema.datasets import load_schema
 from tests.dataset_building.samples.legacy import (
     profile as _profile,
 )
@@ -41,6 +44,7 @@ def test_profiles_are_external_and_all_selects_every_profile(tmp_path: Path) -> 
                         "input": "/external/sample.zarr",
                         "output_name": "sample.refreshed.zarr",
                         "cadence_hours": 6,
+                        "target_schema": "standards/sample.yaml",
                     }
                 }
             }
@@ -51,6 +55,7 @@ def test_profiles_are_external_and_all_selects_every_profile(tmp_path: Path) -> 
     profiles = load_profiles(config)
     assert [profile.key for profile in select_profiles(profiles, ["all"])] == ["sample"]
     assert profiles["sample"].already_refreshed == "error"
+    assert profiles["sample"].target_schema == tmp_path / "standards/sample.yaml"
 
 
 def test_statistics_corrections_are_channel_aligned() -> None:
@@ -87,33 +92,127 @@ def test_already_refreshed_source_is_rejected_before_open(tmp_path: Path) -> Non
         LegacyZarrSource(_profile(source))
 
 
-def test_refresh_store_uses_zarr_v2_and_dot_chunk_keys(tmp_path: Path) -> None:
+def test_refresh_store_uses_native_v3_metadata_and_slash_chunk_keys(tmp_path: Path) -> None:
     store = tmp_path / "refreshed.zarr"
     create_refreshed_store(
         store,
-        dataset_id="synthetic",
-        data_revision="test",
+        schema=load_schema(_profile(tmp_path).target_schema)[0],
         times=np.asarray(["2024-01-01"], dtype="datetime64[D]"),
-        channels=("t2m", "q1000"),
+        channels=("q1000", "ssrd"),
         lat=np.asarray([1.0, -1.0]),
-        lon=np.asarray([0.0, 180.0]),
+        lon=np.asarray([0.0, 2.0]),
         mean=np.asarray([0.0, 0.0]),
         std=np.asarray([1.0, 1.0]),
         land_mask=np.asarray([[True, False], [False, True]]),
-        radiation_seconds=None,
     )
     zarr.consolidate_metadata(str(store))
 
-    root = json.loads((store / ".zgroup").read_text(encoding="utf-8"))
-    data = json.loads((store / "data" / ".zarray").read_text(encoding="utf-8"))
-    assert root["zarr_format"] == 2
-    assert data["dimension_separator"] == "."
-    assert (store / ".zmetadata").is_file()
+    root = json.loads((store / "zarr.json").read_text(encoding="utf-8"))
+    data = json.loads((store / "data" / "zarr.json").read_text(encoding="utf-8"))
+    assert root["zarr_format"] == 3
+    assert data["chunk_key_encoding"] == {"name": "default", "configuration": {"separator": "/"}}
+    assert data["dimension_names"] == ["time", "channel", "lat", "lon"]
+    assert root["consolidated_metadata"]["kind"] == "inline"
+    assert not (store / ".zgroup").exists()
+    assert (
+        json.loads((store / "channel/zarr.json").read_text())["data_type"]["name"]
+        == "fixed_length_utf32"
+    )
+    assert zarr.open_group(str(store), mode="r")["time"].dtype == np.dtype("datetime64[ns]")
 
 
 def test_invalid_statistics_pattern_is_rejected() -> None:
     with pytest.raises(ValueError, match="matched no channels"):
         correct_statistics(("t2m",), np.asarray([0.0]), np.asarray([1.0]), {}, {"q*": 2.0})
+
+
+def test_channels_require_an_exact_set_and_explicit_aliases():
+    assert refresh.canonicalize_channels(
+        ("old_ssrd", "q1000"), {"old_ssrd": "ssrd"}, ("q1000", "ssrd")
+    ) == (("q1000", "ssrd"), (1, 0))
+    with pytest.raises(ValueError, match="missing=.*ssrd.*extra=.*t2m"):
+        refresh.canonicalize_channels(("t2m", "q1000"), {}, ("q1000", "ssrd"))
+    with pytest.raises(ValueError, match="duplicate"):
+        refresh.canonicalize_channels(("ssrd", "old_ssrd"), {"old_ssrd": "ssrd"}, ("ssrd",))
+
+
+@pytest.mark.parametrize("mismatch", ["cadence", "radiation", "grid", "time"])
+def test_source_disagreement_is_rejected_before_writing(tmp_path, mismatch):
+    source = tmp_path / "legacy.zarr"
+    _write_legacy_store(source)
+    profile = _profile(source)
+    if mismatch == "cadence":
+        profile = replace(profile, cadence_hours=24)
+    elif mismatch == "radiation":
+        profile = replace(profile, radiation_seconds=86400)
+    else:
+        group = zarr.open_group(str(source), mode="r+")
+        group["lat" if mismatch == "grid" else "time"][0] += 1
+    before = _snapshot_files(source)
+    with pytest.raises(ValueError, match="differs from target schema|time cadence mismatch"):
+        refresh_legacy_zarr(profile, tmp_path / "output")
+    assert not (tmp_path / "output").exists()
+    assert _snapshot_files(source) == before
+
+
+def test_full_comparison_requires_physically_written_all_nan_frame(tmp_path):
+    source = tmp_path / "legacy.zarr"
+    _write_legacy_store(source)
+    zarr.open_array(str(source / "data"), mode="r+")[1] = np.nan
+    profile = _profile(source)
+    output, _ = refresh_legacy_zarr(profile, tmp_path / "output", full_data_check=True)
+    chunk = output / "data/c/1/0/0/0"
+    assert chunk.is_file()
+    chunk.unlink()
+    with pytest.raises(ValueError, match="physically missing"):
+        refresh.validate_refreshed_store(
+            output, LegacyZarrSource(profile), [0, 1], full_data_check=True
+        )
+
+
+def test_output_with_v3_content_label_but_v2_storage_is_rejected(tmp_path):
+    source = tmp_path / "legacy.zarr"
+    _write_legacy_store(source)
+    output = tmp_path / "wrong.zarr"
+    group = zarr.open_group(str(output), mode="w", zarr_format=2)
+    group.attrs["content_version"] = "v3"
+    with pytest.raises(ValueError, match="storage must be Zarr v3"):
+        refresh.validate_refreshed_store(output, LegacyZarrSource(_profile(source)), [0, 1])
+
+
+def test_existing_v3_source_is_also_refreshed_without_reprocessing(tmp_path):
+    source = tmp_path / "legacy-v3.zarr"
+    values = _write_legacy_store(source, zarr_format=3)
+    output, _ = refresh_legacy_zarr(_profile(source), tmp_path / "output", full_data_check=True)
+    np.testing.assert_array_equal(
+        zarr.open_array(str(output / "data"), mode="r")[:],
+        values[:, [1, 0], ::-1].astype("f2"),
+    )
+
+
+def test_changed_template_cannot_resume_old_staging(tmp_path, monkeypatch):
+    source = tmp_path / "source.zarr"
+    _write_legacy_store(source)
+    profile = _profile(source)
+    schema_path = tmp_path / "target.yaml"
+    schema_path.write_bytes(profile.target_schema.read_bytes())
+    profile = replace(profile, target_schema=schema_path)
+    read_data = LegacyZarrSource.read_data
+
+    def interrupt(self, index):
+        if index == 1:
+            raise RuntimeError("interrupted for template-change test")
+        return read_data(self, index)
+
+    monkeypatch.setattr(LegacyZarrSource, "read_data", interrupt)
+    with pytest.raises(RuntimeError, match="interrupted for template-change test"):
+        refresh_legacy_zarr(profile, tmp_path / "output")
+    monkeypatch.setattr(LegacyZarrSource, "read_data", read_data)
+    document = yaml.safe_load(schema_path.read_text())
+    document["meta_info"]["template_version"] = "v2"
+    schema_path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="staging fingerprint differs"):
+        refresh_legacy_zarr(profile, tmp_path / "output")
 
 
 def test_end_to_end_refresh_aligns_channels_latitude_statistics_and_mask(
@@ -132,7 +231,7 @@ def test_end_to_end_refresh_aligns_channels_latitude_statistics_and_mask(
     group = zarr.open_group(str(output), mode="r")
     assert group["channel"][:].tolist() == ["q1000", "ssrd"]
     np.testing.assert_array_equal(group["lat"][:], [1.0, -1.0])
-    np.testing.assert_array_equal(group["lon"][:], [0.0, 180.0])
+    np.testing.assert_array_equal(group["lon"][:], [0.0, 2.0])
     np.testing.assert_allclose(group["mean"][:], [1.0, 12.0])
     np.testing.assert_allclose(group["std"][:], [0.25, 6.0])
 
@@ -145,7 +244,7 @@ def test_end_to_end_refresh_aligns_channels_latitude_statistics_and_mask(
     assert manifest["validation"]["status"] == "ok"
     assert manifest["validation"]["full_data_check"] is True
     assert len(manifest["validation"]["checked_data_chunks"]) == 2
-    assert (output / "refresh_manifest.json").is_file()
+    assert output.with_name(output.name + ".refresh_manifest.json").is_file()
     reopened_manifest = read_manifest(output)
     assert reopened_manifest["validation"]["status"] == "ok"
     assert reopened_manifest["source_indices"] == {
@@ -160,10 +259,7 @@ def test_single_file_cli_help(tmp_path: Path, as_module: bool) -> None:
     script = Path(refresh.__file__).resolve()
     assert script.name == "legacy_zarr_refresh.py"
     assert not list(script.with_suffix("").glob("*.py"))
-    entry = (
-        ["-m", "examples.dataset_building.legacy_zarr_refresh"]
-        if as_module else [str(script)]
-    )
+    entry = ["-m", "examples.dataset_building.legacy_zarr_refresh"] if as_module else [str(script)]
     result = subprocess.run(
         [sys.executable, *entry, "--help"],
         cwd=script.parents[2] if as_module else tmp_path,
@@ -176,7 +272,8 @@ def test_single_file_cli_help(tmp_path: Path, as_module: bool) -> None:
 
 
 def test_cli_inspection_and_dry_run_are_read_only(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     source = tmp_path / "source.zarr"
     _write_legacy_store(source)
@@ -190,11 +287,22 @@ def test_cli_inspection_and_dry_run_are_read_only(
     inventory = json.loads(capsys.readouterr().out)
     assert inventory["synthetic"]["channels"] == ["q1000", "ssrd"]
     output = tmp_path / "output"
-    refresh.main([
-        "--config", str(config), "pilot", "--dataset", "synthetic",
-        "--output-root", str(output), "--start-index", "1", "--count", "1",
-        "--dry-run",
-    ])
+    refresh.main(
+        [
+            "--config",
+            str(config),
+            "pilot",
+            "--dataset",
+            "synthetic",
+            "--output-root",
+            str(output),
+            "--start-index",
+            "1",
+            "--count",
+            "1",
+            "--dry-run",
+        ]
+    )
     plan = json.loads(capsys.readouterr().out)
     assert plan["source_indices"] == {"start": 1, "end": 1, "count": 1}
     assert plan["actions"]["channel_reorder"] is True
@@ -204,7 +312,8 @@ def test_cli_inspection_and_dry_run_are_read_only(
 
 
 def test_single_file_cli_refresh_validate_and_auxiliary(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     source = tmp_path / "source.zarr"
     values = _write_legacy_store(source)
@@ -219,8 +328,14 @@ def test_single_file_cli_refresh_validate_and_auxiliary(
     selection = ["--dataset", "synthetic", "--output-root", str(output_root)]
     subprocess.run(
         [
-            sys.executable, str(Path(refresh.__file__).resolve()), *common,
-            "convert", *selection, "--workers", "2", "--full-data-check",
+            sys.executable,
+            str(Path(refresh.__file__).resolve()),
+            *common,
+            "convert",
+            *selection,
+            "--workers",
+            "2",
+            "--full-data-check",
         ],
         cwd=tmp_path,
         capture_output=True,
@@ -235,10 +350,17 @@ def test_single_file_cli_refresh_validate_and_auxiliary(
     np.testing.assert_array_equal(group["data"][:], values[:, [1, 0], ::-1, :].astype("f2"))
     embedded_mask = np.asarray(group["mask"][:])
 
-    refresh.main([
-        *common, "validate", "--dataset", "synthetic",
-        "--zarr", str(output), "--full-data-check",
-    ])
+    refresh.main(
+        [
+            *common,
+            "validate",
+            "--dataset",
+            "synthetic",
+            "--zarr",
+            str(output),
+            "--full-data-check",
+        ]
+    )
     assert json.loads(capsys.readouterr().out)["status"] == "ok"
     target_before = _snapshot_files(output)
     refresh.main([*common, "auxiliary", *selection, "--dry-run", "--strict"])
@@ -247,13 +369,21 @@ def test_single_file_cli_refresh_validate_and_auxiliary(
     refresh.main([*common, "auxiliary", *selection, "--strict"])
     assert json.loads(capsys.readouterr().out)[0]["status"] == "ok"
     assert (output / "mask.npy").is_file()
-    assert (output / "auxiliary_refresh_manifest.json").is_file()
+    assert output.with_name(output.name + ".auxiliary_refresh_manifest.json").is_file()
     np.testing.assert_array_equal(group["mask"][:], embedded_mask)
 
-    refresh.main([
-        *common, "pilot", *selection, "--start-index", "1",
-        "--count", "1", "--full-data-check",
-    ])
+    refresh.main(
+        [
+            *common,
+            "pilot",
+            *selection,
+            "--start-index",
+            "1",
+            "--count",
+            "1",
+            "--full-data-check",
+        ]
+    )
     capsys.readouterr()
     pilot = output_root / "synthetic.refreshed.zarr.pilot.1_1"
     assert read_manifest(pilot)["source_indices"] == {"start": 1, "end": 1, "count": 1}
@@ -261,7 +391,8 @@ def test_single_file_cli_refresh_validate_and_auxiliary(
 
 
 def test_refresh_resumes_after_interrupted_read(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = tmp_path / "source.zarr"
     values = _write_legacy_store(source)
@@ -280,7 +411,9 @@ def test_refresh_resumes_after_interrupted_read(
     assert json.loads(state.read_text(encoding="utf-8"))["completed"] == 1
     monkeypatch.setattr(LegacyZarrSource, "read_data", original)
     output, manifest = refresh_legacy_zarr(
-        _profile(source), output_root, full_data_check=True,
+        _profile(source),
+        output_root,
+        full_data_check=True,
     )
     assert manifest["validation"]["status"] == "ok"
     assert not state.exists()
@@ -297,7 +430,7 @@ def external_store(variable: str) -> Path:
 
 
 def assert_dataset_store(path: Path) -> None:
-    assert (path / ".zgroup").is_file(), f"not a Zarr v2 store: {path}"
+    assert json.loads((path / "zarr.json").read_text())["zarr_format"] == 3
     group = zarr.open_group(str(path), mode="r")
     assert {
         "data",

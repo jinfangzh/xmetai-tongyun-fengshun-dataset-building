@@ -11,22 +11,22 @@ from legacy_zarr_refresh import (
     migrate_auxiliary_files,
 )
 
+from datakit.schema.datasets import load_schema
+from tests.dataset_building.samples.legacy import profile
 from tests.dataset_building.samples.legacy import write_const as _write_const
 
 
 def _target_store(path: Path) -> None:
     create_refreshed_store(
         path,
-        dataset_id="synthetic",
-        data_revision="test",
+        schema=load_schema(profile(path).target_schema)[0],
         times=np.asarray(["2024-01-01"], dtype="datetime64[D]"),
-        channels=("t2m",),
+        channels=("q1000", "ssrd"),
         lat=np.asarray([1.0, -1.0]),
-        lon=np.asarray([0.0, 180.0]),
-        mean=np.asarray([0.0]),
-        std=np.asarray([1.0]),
+        lon=np.asarray([0.0, 2.0]),
+        mean=np.asarray([0.0, 0.0]),
+        std=np.asarray([1.0, 1.0]),
         land_mask=np.asarray([[True, False], [False, True]]),
-        radiation_seconds=None,
     )
 
 
@@ -61,7 +61,7 @@ def test_auxiliary_migration_aligns_const_weight_and_mask(tmp_path: Path) -> Non
         {"lsm": (("lat", "lon"), np.asarray([[0, 1], [1, 1]], dtype="u1"))},
         coords={
             "lat": np.asarray([-1.0, 1.0]),
-            "lon": np.asarray([180.0, 0.0]),
+            "lon": np.asarray([2.0, 0.0]),
         },
     ).to_netcdf(source / "mask.nc")
 
@@ -86,7 +86,7 @@ def test_auxiliary_migration_aligns_const_weight_and_mask(tmp_path: Path) -> Non
     assert (target / "const.nc").is_file()
     assert (target / "weight.npy").is_file()
     assert (target / "mask.npy").is_file()
-    assert (target / "auxiliary_refresh_manifest.json").is_file()
+    assert target.with_name(target.name + ".auxiliary_refresh_manifest.json").is_file()
     np.testing.assert_array_equal(
         np.load(target / "weight.npy"),
         np.asarray([[[20.0], [10.0]]], dtype="f4"),
@@ -108,7 +108,7 @@ def test_auxiliary_default_preserves_embedded_mask(tmp_path: Path) -> None:
         {"lsm": (("lat", "lon"), np.asarray([[0, 1], [1, 1]], dtype="u1"))},
         coords={
             "lat": np.asarray([-1.0, 1.0]),
-            "lon": np.asarray([180.0, 0.0]),
+            "lon": np.asarray([2.0, 0.0]),
         },
     ).to_netcdf(source / "mask.nc")
 

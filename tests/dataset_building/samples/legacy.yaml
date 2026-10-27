@@ -1,0 +1,168 @@
+# Independent expected standard for the two-channel legacy fixture.
+meta_info:
+  name: Independent legacy refresh sample
+  dataset_id: synthetic.c2.tiny.h6
+  expected_root_dataset_id: synthetic
+  product:
+    id: synthetic.c2
+    version: '1.0'
+    variant: tiny.h6
+  schema_version: '2.0'
+  status: approved
+  template_version: v1
+  dataset_path: synthetic.refreshed.zarr
+  auxiliary_directory: synthetic.refreshed.zarr
+  dataset_version: v3
+  storage_format:
+    name: zarr
+    version: 3
+    allow_nested_groups: false
+  data_revision: test
+  validation_scope: confirmed-format
+  identity_mapping_evidence: Independent fixture directory and root identity
+  time_coverage:
+    first: 2024-01-01T00
+    last: 2024-01-01T06
+    time_count: 2
+    time_resolution:
+      value: 6
+      unit: hour
+    timezone: UTC
+  grid:
+    space_resolution: 2
+    coordinate_units: degree
+    latitude:
+      first: 1.0
+      last: -1.0
+      count: 2
+      direction: north-to-south
+    longitude:
+      first: 0.0
+      last: 2.0
+      count: 2
+      direction: west-to-east
+  pressure:
+    variables:
+    - q
+    units: hPa
+    channel_name_template: '{variable}{level}'
+    levels:
+    - 1000
+  channels:
+  - q1000
+  - ssrd
+  arrays:
+    data:
+      dimensions:
+      - time
+      - channel
+      - lat
+      - lon
+      dtype: float16
+      chunks:
+        time: 1
+        channel: full
+        lat: full
+        lon: full
+    time:
+      dimensions:
+      - time
+      dtype: datetime64[ns]
+    channel:
+      dimensions:
+      - channel
+      dtype: string
+    lat:
+      dimensions:
+      - lat
+      dtype: float32
+    lon:
+      dimensions:
+      - lon
+      dtype: float32
+    mean:
+      dimensions:
+      - channel
+      dtype: float32
+    std:
+      dimensions:
+      - channel
+      dtype: float32
+    mask:
+      dimensions:
+      - mask_channel
+      - lat
+      - lon
+      dtype: uint8
+    mask_channel:
+      dimensions:
+      - mask_channel
+      dtype: string
+  mask:
+    channels:
+    - land_mask
+    - sea_mask
+    allowed_values:
+    - 0
+    - 1
+    valid_value: 1
+    complement_sum: 1
+  metadata:
+    data_attributes:
+      data_representation: normalized
+      normalization_method: channel_dependent
+      mean_variable: mean
+      std_variable: std
+      scale_factor_location: channel.channel_info[*].scale_factor
+      add_offset_location: channel.channel_info[*].add_offset
+      inverse_transform: preprocessed_value = data * scale_factor + add_offset
+    channel_metadata:
+      attribute: channel_info
+      version_attribute: channel_info_schema_version
+      version: '1.0'
+      require_exact_channels: true
+      long_name_required: true
+      scale_factor_from: std
+      add_offset_from: mean
+      scale_offset_formula: preprocessed_value = normalized_value * scale_factor +
+        add_offset
+  normalization:
+    statistics:
+      mean_finite: true
+      std_finite: true
+      std_positive: true
+  auxiliaries:
+    check_variable_names: false
+    unregistered_file_status: warning
+    files: {}
+variable_metadata:
+  q:
+    units: g kg-1
+    long_name: q1000
+    source_name: q
+    source_units: kg kg-1
+    variable_type: instantaneous
+    preprocessing:
+    - operation: multiply
+      factor: 1000.0
+      input_units: kg kg-1
+      output_units: g kg-1
+    - operation: zscore
+      mean: /mean
+      std: /std
+  ssrd:
+    units: W m-2
+    long_name: Surface short-wave radiation downwards
+    source_name: ssrd
+    source_units: J m-2
+    level_type: surface
+    variable_type: accumulated
+    preprocessing:
+    - operation: divide
+      divisor: 21600.0
+      accumulation_window_seconds: 21600
+      input_units: J m-2
+      output_units: W m-2
+    - operation: zscore
+      mean: /mean
+      std: /std

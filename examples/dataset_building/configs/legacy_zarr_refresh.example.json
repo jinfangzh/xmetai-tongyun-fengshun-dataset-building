@@ -1,8 +1,153 @@
 {
   "datasets": {
-    "oras5": {
-      "input": "/path/to/legacy/oras5.zarr",
-      "output_name": "oras5.refreshed.zarr",
+    "cra_c71_p25_h6": {
+      "input": "/path/to/legacy/cra_c71_p25_h6.zarr",
+      "output_name": "cra.19790101_20260714.c71.p25.h6.v1",
+      "target_schema": "../../../datakit/schema/datasets/cra_c71_p25_h6.yaml",
+      "cadence_hours": 6,
+      "radiation_seconds": null,
+      "channel_coordinate": "auto",
+      "statistics": "auto",
+      "statistics_divide": {},
+      "statistics_multiply": {},
+      "channel_rename": {},
+      "mask": {
+        "kind": "npy",
+        "path": "mask.npy",
+        "threshold": 0.5
+      },
+      "expected_channels": 71,
+      "expected_grid": [
+        721,
+        1440
+      ],
+      "already_refreshed": "error",
+      "notes": "Replace input and mask source; verify statistics corrections from independent source evidence before production."
+    },
+    "cra_c87_1p5_h24": {
+      "input": "/path/to/legacy/cra_c87_1p5_h24.zarr",
+      "output_name": "cra.1979_2025.c87.1p5.h24.v1",
+      "target_schema": "../../../datakit/schema/datasets/cra_c87_1p5_h24.yaml",
+      "cadence_hours": 24,
+      "radiation_seconds": 86400,
+      "channel_coordinate": "auto",
+      "statistics": "auto",
+      "statistics_divide": {},
+      "statistics_multiply": {},
+      "channel_rename": {},
+      "mask": {
+        "kind": "npy",
+        "path": "mask.npy",
+        "threshold": 0.5
+      },
+      "expected_channels": 87,
+      "expected_grid": [
+        121,
+        240
+      ],
+      "already_refreshed": "error",
+      "notes": "Replace input and mask source; verify statistics corrections from independent source evidence before production."
+    },
+    "cra_c87_p25_h24": {
+      "input": "/path/to/legacy/cra_c87_p25_h24.zarr",
+      "output_name": "cra.1979_2024.c87.p25.h24.v1",
+      "target_schema": "../../../datakit/schema/datasets/cra_c87_p25_h24.yaml",
+      "cadence_hours": 24,
+      "radiation_seconds": 86400,
+      "channel_coordinate": "auto",
+      "statistics": "auto",
+      "statistics_divide": {},
+      "statistics_multiply": {},
+      "channel_rename": {},
+      "mask": {
+        "kind": "npy",
+        "path": "mask.npy",
+        "threshold": 0.5
+      },
+      "expected_channels": 87,
+      "expected_grid": [
+        721,
+        1440
+      ],
+      "already_refreshed": "error",
+      "notes": "Replace input and mask source; verify statistics corrections from independent source evidence before production."
+    },
+    "era5_c116_p25_h6": {
+      "input": "/path/to/legacy/era5_c116_p25_h6.zarr",
+      "output_name": "era5.202501_202607.c116.p25.h6.v3",
+      "target_schema": "../../../datakit/schema/datasets/era5_c116_p25_h6.yaml",
+      "cadence_hours": 6,
+      "radiation_seconds": 21600,
+      "channel_coordinate": "auto",
+      "statistics": "auto",
+      "statistics_divide": {},
+      "statistics_multiply": {},
+      "channel_rename": {},
+      "mask": {
+        "kind": "npy",
+        "path": "mask.npy",
+        "threshold": 0.5
+      },
+      "expected_channels": 116,
+      "expected_grid": [
+        721,
+        1440
+      ],
+      "already_refreshed": "error",
+      "notes": "Replace input and mask source; verify statistics corrections from independent source evidence before production."
+    },
+    "era5_c78_p25_h6": {
+      "input": "/path/to/legacy/era5_c78_p25_h6.zarr",
+      "output_name": "era5.1979_2024.c78.p25.h6.v1",
+      "target_schema": "../../../datakit/schema/datasets/era5_c78_p25_h6.yaml",
+      "cadence_hours": 6,
+      "radiation_seconds": 21600,
+      "channel_coordinate": "auto",
+      "statistics": "auto",
+      "statistics_divide": {},
+      "statistics_multiply": {},
+      "channel_rename": {},
+      "mask": {
+        "kind": "npy",
+        "path": "mask.npy",
+        "threshold": 0.5
+      },
+      "expected_channels": 78,
+      "expected_grid": [
+        721,
+        1440
+      ],
+      "already_refreshed": "error",
+      "notes": "Replace input and mask source; verify statistics corrections from independent source evidence before production."
+    },
+    "era5_c87_p25_h24": {
+      "input": "/path/to/legacy/era5_c87_p25_h24.zarr",
+      "output_name": "era5.1959_2025.c87.p25.h24.v1",
+      "target_schema": "../../../datakit/schema/datasets/era5_c87_p25_h24.yaml",
+      "cadence_hours": 24,
+      "radiation_seconds": 86400,
+      "channel_coordinate": "auto",
+      "statistics": "auto",
+      "statistics_divide": {},
+      "statistics_multiply": {},
+      "channel_rename": {},
+      "mask": {
+        "kind": "npy",
+        "path": "mask.npy",
+        "threshold": 0.5
+      },
+      "expected_channels": 87,
+      "expected_grid": [
+        721,
+        1440
+      ],
+      "already_refreshed": "error",
+      "notes": "Replace input and mask source; verify statistics corrections from independent source evidence before production."
+    },
+    "era5_land_c8_1p5_h24": {
+      "input": "/path/to/legacy/era5_land_c8_1p5_h24.zarr",
+      "output_name": "land.1950_2024.c8.1p5.h24.v1",
+      "target_schema": "../../../datakit/schema/datasets/era5_land_c8_1p5_h24.yaml",
       "cadence_hours": 24,
       "radiation_seconds": null,
       "channel_coordinate": "auto",
@@ -11,15 +156,89 @@
       "statistics_multiply": {},
       "channel_rename": {},
       "mask": {
-        "kind": "netcdf",
-        "path": "mask.nc",
-        "variable": "lsm",
+        "kind": "npy",
+        "path": "mask.npy",
         "threshold": 0.5
       },
-      "expected_channels": null,
-      "expected_grid": null,
+      "expected_channels": 8,
+      "expected_grid": [
+        121,
+        240
+      ],
       "already_refreshed": "error",
-      "notes": "Copy this template and replace all placeholder paths before use."
+      "notes": "Replace input and mask source; verify statistics corrections from independent source evidence before production."
+    },
+    "oras5_c88_1p5_h24": {
+      "input": "/path/to/legacy/oras5_c88_1p5_h24.zarr",
+      "output_name": "oras5.1993_2024.c88.1p5.h24.v1",
+      "target_schema": "../../../datakit/schema/datasets/oras5_c88_1p5_h24.yaml",
+      "cadence_hours": 24,
+      "radiation_seconds": null,
+      "channel_coordinate": "auto",
+      "statistics": "auto",
+      "statistics_divide": {},
+      "statistics_multiply": {},
+      "channel_rename": {},
+      "mask": {
+        "kind": "npy",
+        "path": "mask.npy",
+        "threshold": 0.5
+      },
+      "expected_channels": 88,
+      "expected_grid": [
+        121,
+        240
+      ],
+      "already_refreshed": "error",
+      "notes": "Replace input and mask source; verify statistics corrections from independent source evidence before production."
+    },
+    "oras5_c88_p25_h24": {
+      "input": "/path/to/legacy/oras5_c88_p25_h24.zarr",
+      "output_name": "oras5.1993_2024.c88.p25.h24.v1",
+      "target_schema": "../../../datakit/schema/datasets/oras5_c88_p25_h24.yaml",
+      "cadence_hours": 24,
+      "radiation_seconds": null,
+      "channel_coordinate": "auto",
+      "statistics": "auto",
+      "statistics_divide": {},
+      "statistics_multiply": {},
+      "channel_rename": {},
+      "mask": {
+        "kind": "npy",
+        "path": "mask.npy",
+        "threshold": 0.5
+      },
+      "expected_channels": 88,
+      "expected_grid": [
+        721,
+        1440
+      ],
+      "already_refreshed": "error",
+      "notes": "Replace input and mask source; verify statistics corrections from independent source evidence before production."
+    },
+    "s2s_c76_1p5_h24": {
+      "input": "/path/to/legacy/s2s_c76_1p5_h24.zarr",
+      "output_name": "s2s.19500101_20260417.c76.1p5.h24.v1",
+      "target_schema": "../../../datakit/schema/datasets/s2s_c76_1p5_h24.yaml",
+      "cadence_hours": 24,
+      "radiation_seconds": 86400,
+      "channel_coordinate": "auto",
+      "statistics": "auto",
+      "statistics_divide": {},
+      "statistics_multiply": {},
+      "channel_rename": {},
+      "mask": {
+        "kind": "npy",
+        "path": "mask.npy",
+        "threshold": 0.5
+      },
+      "expected_channels": 76,
+      "expected_grid": [
+        121,
+        240
+      ],
+      "already_refreshed": "error",
+      "notes": "Replace input and mask source; verify statistics corrections from independent source evidence before production."
     }
   }
 }
