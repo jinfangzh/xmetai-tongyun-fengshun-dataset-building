@@ -3,7 +3,7 @@
 import numpy as np
 
 from datakit.evaluation.errors import ConfigError
-from examples.dataset_io import climatology_station_probability
+from datakit.io import open_dataset, source_config
 
 
 class RefProbabilitySource:
@@ -21,7 +21,9 @@ class RefProbabilitySource:
     ):
         self.source_id = source_id
         self.root_dir = str(root_dir)
-        source = climatology_station_probability.open(root_dir, layout=layout)
+        source = open_dataset(
+            root_dir, source_config("climatology_station_probability"), layout=layout
+        )
         self._layout = source.layout
         self._thresholds = list(source.layout["thresholds"])
         self._cache: dict[str, dict[int, np.ndarray]] = {}
@@ -40,8 +42,10 @@ class RefProbabilitySource:
     def _load(self, key: str) -> dict[int, np.ndarray]:
         if key not in self._cache:
             try:
-                with climatology_station_probability.open(
-                    self._index[key], layout=self._layout
+                with open_dataset(
+                    self._index[key],
+                    source_config("climatology_station_probability"),
+                    layout=self._layout,
                 ).read(all_files=True) as dataset:
                     values = (
                         dataset.probability.isel(cycle_time=0)

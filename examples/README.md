@@ -1,8 +1,8 @@
 # 具体数据工作流与运行入口
 
 本目录将仓库能力应用到具体数据任务：从源数据下载、接入和处理，到产物制作、质量校验，
-再到不同来源预报数据的评测与报告。每个任务说明输入、处理约定和输出位置，
-调用 `pipelines` 组织流程，并复用 `datakit` 的基础组件。
+再到不同来源预报数据的评测与报告。任务脚本调用 `pipelines` 组织流程，
+并复用 `datakit` 的基础组件。源数据声明独立位于仓库根目录 `config/data_sources/`。
 
 使用现有任务时先选择下面的目录，查看对应 README 和配置，再准备实际数据。
 
@@ -26,11 +26,11 @@ python -m pip install -e '.[all,test]'       # 数据工作流及测试依赖
 
 | 目录 | 内容 |
 |---|---|
-| `dataset_io/` | 数据组织说明、变量映射和原始访问 |
-| `dataset_building/` | ERA5、ORAS5 等数据集制作脚本 |
-| `dataset_processing/` | Zarr 导出、反归一化及 NetCDF 拆分 |
-| `validation/` | 数据校验配置和运行脚本 |
-| `evaluation/` | 评测配置和运行脚本 |
+| [dataset_io](dataset_io/README.md) | `io_example.py` 展示统一调用；根目录 `config/data_sources/` 保存独立 YAML 声明 |
+| [dataset_building](dataset_building/README.md) | 制作归一化数据集、执行独立 YAML 标准验收 |
+| [dataset_processing](dataset_processing/README.md) | NetCDF 预处理、单位换算、原始实况提取和 Zarr 切片导出 |
+| [validation](validation/README.md) | 比较两份 NetCDF，或对照 Zarr 与导出 NetCDF 的数值 |
+| [evaluation](evaluation/README.md) | 对预报评分并生成报告 |
 | `dataset_downloader/` | CDS 和 Copernicus Marine 下载方案 |
 
 可先查看脚本参数：
@@ -41,7 +41,12 @@ python -m examples.dataset_processing.era5_zarr_to_nc --help
 ```
 
 任务详情见 [数据集接入](dataset_io/README.md)、[制作](dataset_building/README.md)、
-[校验](validation/README.md) 和 [评测与报告](evaluation/README.md)。
+[处理与导出](dataset_processing/README.md)、
+[标准验收](../docs/DATASET_VALIDATION.md)、[基础对照](validation/README.md) 和
+[评测与报告](evaluation/README.md)。
+
+`dataset_building` 与 `validation` 的包入口不转导出公共函数；Python 调用直接引用
+`pipelines.dataset`、`pipelines.dataset_building` 或 `datakit.validation`。
 
 制作和处理脚本需要实际数据。下载器按照 Batch YAML 中的 `storage.root_path`
 写入文件，运行前应检查数据范围、输出目录和服务凭据。

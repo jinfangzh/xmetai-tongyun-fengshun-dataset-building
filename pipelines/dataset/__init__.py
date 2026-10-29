@@ -1,7 +1,7 @@
 """Path-level pipelines for building and inspecting reusable datasets.
 
-This module is the only public pipeline surface.  It combines the package's
-explicit IO, in-memory processing and validation modules;
+This module exposes dataset conversion, export and validation entry points.
+It combines the package's explicit IO, in-memory processing and validation modules;
 it does not provide a workflow engine, registry, CLI or configuration layer.
 """
 
@@ -19,11 +19,10 @@ from ._conversion import (
     extract_zarr_to_netcdf,
 )
 from ._raw_truth import extract_raw_truth_day
-from ._standard_comparison import (
-    validate_standard_combination,
+from pipelines.dataset_building import (
     validate_standard_conversion,
+    validate_standard_dataset,
 )
-from ._standard_validation import validate_standard_dataset
 from ._validation import validate_zarr_netcdf_consistency
 
 
@@ -100,5 +99,4 @@ __all__ = [
     "validate_zarr_netcdf_consistency",
     "validate_standard_dataset",
     "validate_standard_conversion",
-    "validate_standard_combination",
 ]

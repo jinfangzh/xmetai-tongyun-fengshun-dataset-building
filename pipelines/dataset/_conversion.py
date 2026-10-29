@@ -12,7 +12,7 @@ import xarray as xr
 
 from datakit import io as dataset_io
 from datakit.io.backends.files import infer_format, normalize_format
-from datakit.schema import channel_attributes
+from pipelines.dataset_building.production.channel_metadata import channel_attributes
 from datakit.transforms import (
     denormalize_xarray,
     enrich_dataset_attrs,

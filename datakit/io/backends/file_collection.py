@@ -171,6 +171,9 @@ _PARTITION_AXES = {
 
 def read_records(records, description, **options):
     """读取已发现的文件记录，供统一入口和逐文件处理复用。"""
+    from .files import declared_open_options
+
+    options = declared_open_options(description, options)
     load = options.pop("load_partitions", False)
     options.setdefault("chunks", None if load or len(records) == 1 else {})
     if options["chunks"] is None and len(records) > 1 and not load:
@@ -422,4 +425,9 @@ def write(dataset, root, description, **options):
             part[name] = part[name].transpose(*dimensions)
         planned_paths.add(path)
         plans.append((path, part))
-    return [write_file(part, path, options) for path, part in plans]
+    from .files import declared_open_options
+
+    return [
+        write_file(part, path, declared_open_options(description, options))
+        for path, part in plans
+    ]

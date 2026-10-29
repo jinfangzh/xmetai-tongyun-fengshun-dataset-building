@@ -9,11 +9,10 @@ from typing import Any
 from datakit import io
 from datakit.evaluation.contracts import DataBundle, DataIndex, DataRequest
 from datakit.evaluation.errors import DecodeError, DiscoveryError
-from datakit.io import get_layout
+from datakit.io import get_description, get_layout, source_config
 from datakit.io.backends.file_collection import Record as GriddedRecord
 from datakit.io.backends.station_tables import parse_station_file_time
 from datakit.schema.semantics import DataKind, TemporalKind
-from examples.dataset_io import observation_diamond
 
 from ._bundle import build_bundle
 from .dataset_profiles import DIAMOND_STATION_MAPPING
@@ -29,8 +28,8 @@ class DiamondStationCatalog:
 
     def discover(self, request: DataRequest) -> DataIndex:
         for description in (
-            observation_diamond.FLAT_DESCRIPTION,
-            observation_diamond.DESCRIPTION,
+            get_description(source_config("observation_diamond_flat")),
+            get_description(source_config("observation_diamond")),
         ):
             try:
                 records = io.open(self.station_dir, get_layout(description)).discover(
@@ -73,7 +72,7 @@ class DiamondStationReader:
         try:
             dataset = read_tables(
                 records,
-                get_layout(observation_diamond.DESCRIPTION),
+                get_layout(get_description(source_config("observation_diamond"))),
                 stations=self.station_whitelist,
                 fixed_station_metadata=True,
             )

@@ -65,7 +65,7 @@ def _gridded_source(
 ) -> SourceHandle:
     """通用格点数据源：具名布局 + 通用 Reader/Catalog。
 
-    数据源之间的差别只有布局声明（见 ``examples/dataset_io``），
+    数据源之间的差别只有布局声明（见 ``config/data_sources``），
     所以这里不需要为每个模型写一个 Reader 类。
     """
     from pipelines.evaluation.sources import GriddedCatalog, GriddedReader

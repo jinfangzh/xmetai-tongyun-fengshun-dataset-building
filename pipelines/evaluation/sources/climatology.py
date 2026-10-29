@@ -8,12 +8,11 @@ from pathlib import Path
 from datakit import io
 from datakit.evaluation.contracts import DataBundle, DataIndex, DataRequest
 from datakit.evaluation.errors import DecodeError, DiscoveryError
-from datakit.io import get_layout
+from datakit.io import get_description, get_layout, source_config
 from datakit.io.backends.file_collection import Record as GriddedRecord
 from datakit.io.backends.file_collection import read_records
 from datakit.schema.mapping import DatasetMapping, VarSpec, apply_dataset_mapping
 from datakit.schema.semantics import DataKind, TemporalKind
-from examples.dataset_io import climatology_cra
 
 from ._bundle import build_bundle
 from .dataset_profiles import CLIMATOLOGY_MAPPING, DEFAULT_GRIB_FILTERS
@@ -38,7 +37,9 @@ class ClimatologyCatalog:
                 "{hh}", "{cycle_time:%H}"
             )
             for suffix in (".grib2", ".grib", ".nc"):
-                description = get_layout(climatology_cra.DESCRIPTION)
+                description = get_layout(
+                    get_description(source_config("climatology_cra"))
+                )
                 description["layout"]["filename"] = str(
                     Path(filename).with_suffix(suffix)
                 )

@@ -1,0 +1,27 @@
+name: diamond_station
+format:
+  name: diamond_station
+  encoding: gbk
+  header_lines: 2
+  columns:
+  - station
+  - lon
+  - lat
+  - altitude
+  - precipitation
+layout:
+  directory: '{time:%Y%m%d}'
+  filename: '{time:%H}.000'
+mapping:
+  variables:
+    tp:
+      source: precipitation
+      unit: mm
+      temporal_kind: interval_accumulation
+time_zone: Asia/Shanghai
+example: 20250101/06.000
+notes: "Diamond 站点观测：支持分日目录和平铺目录两种文件组织。\n\n分日：                         平铺（flat=True）：\n\
+  \    root/                         root/\n      20250101/                     2025010106.000\n\
+  \        06.000                      2025010112.000\n        12.000\n\n文件名为源数据的北京时间，不自动转换为\
+  \ UTC。\nGBK 文本有两行表头，数据列为：站号、经度、纬度、海拔、降水，后续数值列原样保留。\nread() 不处理缺测哨兵；需要标准降水变量 tp 时再显式调用\
+  \ normalize()。"

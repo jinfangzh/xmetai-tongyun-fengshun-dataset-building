@@ -1,12 +1,14 @@
 # 标准数据集校验计划
 
-版本：1.4
+版本：1.5
 
 生效日期：2026-10-13
 
-适用配置版本：1.6
+适用模板版本：独立 YAML `v1`
 
 校验范围标识：`confirmed-format`
+
+声明组织修订：以十份独立 YAML 替代 JSON profile 和 Python 产品验收声明；保留已确认规则及扫描门槛。
 
 ## 1. 目的与适用范围
 
@@ -15,31 +17,38 @@
 本版只纳入已确认规则，不以暂定规则或默认经验阈值作验收依据。
 
 当前十套实例以所有者指定的 refresh 数据集为格式基准。通道清单、顺序和网格已冻结在
-各产品 schema 中；运行时不得从被检数据反推标准。新生产批次使用同一产品标准，另建
-实例 profile 冻结路径、时间范围和数据修订号，不将本批的起止时间套用于其他批次。
+各套独立 YAML 中；运行时不得从被检数据反推标准。新生产批次使用同一产品标准，另存
+独立 YAML 冻结路径、时间范围和数据修订号，不将本批的起止时间套用于其他批次。
 
 程序始终只读。不得自动改名、以 `level` 代替 `channel`、重排、翻转网格、填零、
-裁剪负权重、修复元数据或用旧附件补齐主 Zarr。core 的兼容读取行为不改变本版命名标准。
+裁剪负权重、修复元数据或用旧附件补齐主 Zarr。下游读取器的兼容行为不改变本版命名标准。
+本流程不执行模型读取、训练或推理，不核验消费者及模型测试回执。
+跨数据集的组合校验不属于本计划；多份标准的批量运行只是分别验收，不增加联合使用门槛。
 
 ## 2. 标准组织与职责
 
 | 层次 | 位置 | 内容 |
 |---|---|---|
-| 共用结构 | `datakit/schema/standard_dataset.py` | 网格、通道、掩膜、辅助角色和实例类型 |
-| 产品标准 | `datakit/schema/*_c*.py`、`dataset_products.py` | 完整有序通道、可验收语义字段、网格变体、掩膜、辅助结构 |
-| 批次实例 | `examples/validation/profiles/*.json` | 产品版本、时间首末值、独立计数、路径、修订号、校验范围 |
-| 严格 IO | `datakit/io/_zarr_inspection.py` | 原始元数据、指定块、物理块键、编码支持范围 |
-| 条目检查 | `datakit/validation/` | 结构、时间、语义、辅助文件、原值检查和报告对象 |
-| 路径编排 | `pipelines/dataset/_standard_validation.py` | 只读扫描、覆盖计数、错误和中断结论 |
-| 块扫描 | `pipelines/dataset/_standard_scan.py` | 主块读取、物理覆盖、有界进度记录；资源测量由同层私有助手负责 |
-| 执行与保存 | `examples/validation/validate_standard_dataset.py` | 单套/批量 CLI、报告、逐块证据 |
+| 固定目标模型 | `datakit/schema/datasets/specifications.py` | 标准结构、声明约束和期望值推导，不包含运行快照或回执绑定 |
+| 标准加载 | `datakit/schema/datasets/inputs.py` | 严格 YAML 加载、关联校验、路径及原始字节摘要 |
+| 运行绑定 | `pipelines/dataset_building/support/specifications.py` | 运行快照/回执及转换对照规格，不回写 YAML |
+| 执行输入 | `pipelines/dataset_building/support/inputs.py` | 调用基础标准加载器、装配执行 JSON、执行源摘要及独立证据绑定 |
+| 独立标准 | `examples/dataset_building/configs/standards/*.yaml` | 完整有序通道、可验收语义字段、网格、掩膜、辅助结构和批次信息 |
+| 生产定义与元数据 | `pipelines/dataset_building/production/era5_c116.py`、`channel_metadata.py` | c116 来源映射及生产元数据生成；不从生成器推导验收真值 |
+| 严格 IO | `datakit/validation/zarr_inspection.py` | 原始元数据、指定块、物理块键、编码支持范围 |
+| 条目检查 | `pipelines/dataset_building/checks/` 下的 `format.py`、`values.py`、`storage.py`、`conversion.py` | 主数据/附件格式与数值、物理完整性、转换对照及回执业务规则 |
+| 单套验收与扫描 | `pipelines/dataset_building/workflows/dataset.py` | 单套/批量 quick/full 主块读取、物理遍历、有界进度、中断及资源控制 |
+| 转换对照 | `pipelines/dataset_building/workflows/conversion.py` | 转换保真 quick/full，配置装配调用 inputs，规则调用 checks |
+| 报告 | `pipelines/dataset_building/support/reports.py` | 完成结论汇总、输出保护和报告保存；不核验转换回执业务内容 |
+| 执行入口 | `examples/dataset_building/validate_standard_*.py` | 参数、信号、退出码适配 |
 
-产品标准、实例 profile 和输入分别保留版本及摘要。本版 profile 的 `approved` 只表示
-本版已纳入规则获准使用，不表示数据已通过 full 或已完成其他用途的验收。
-
-每个产品文件统一声明 `CHANNELS`、`MASK`、`VARIANTS`、`PRODUCT`，完整产品在本文件
-使用具名参数组装。产品汇总仅导入和选择；已有生产名称保留兼容导出，多版本产品显式
-分开声明，不自动转换。共用层次、语义和辅助定义不依赖具体产品文件。
+基础库提供固定标准模型、严格 YAML 解析并随包携带 YAML；运行绑定、检查、证据及执行集中在流程层。
+原 acceptance 层移除，production、checks、workflows、support 直接并列。
+依赖方向为 workflows → checks → support，验收不导入生产定义，规则不自行打开或遍历文件。
+基础库不反向依赖 pipeline 或模型项目。每份标准自包含，不使用合并草稿、alias/merge 或 Python 产品注册表。
+配置标识、根 ID、产品版本、模板版本、数据版本及 SHA256 分开记录。
+`status: approved` 只表示已纳入规则获准使用，不表示数据已通过 full 或其他用途验收。
+ERA5 c116 的来源映射及通道元数据生成仍用于生产，仅迁至独立 production 子包，不从生成器推导验收真值。
 
 ## 3. 校验条款
 
@@ -48,12 +57,12 @@
 1. **A01** 根 `dataset_id`、`schema_version=2.0`、`content_version=v3`、`data_revision` 与实例一致。
 2. **A02** 目录名与冻结值一致；目录名和根 ID 不同须有显式实例映射，时间范围以完整时间轴为准。
 3. **A03** 根空间范围与产品网格一致；主数组具备规范化表示、统计量引用和逆变换声明。
-4. **A04** profile 加载严格拒绝未知配置键；检查前后 SHA256 相同，记录产品、配置、掩膜和工具版本。
+4. **A04** YAML 加载严格拒绝重复键、未知配置键和未支持声明；检查前后原始字节 SHA256 相同，记录产品、配置、模板、掩膜和工具版本。
 
 ### B. 主 Zarr 结构与存储编码
 
 1. **B01** 本批使用 Zarr v3，根数组准确为 `data/time/channel/lat/lon/mean/std/mask/mask_channel`；不得有嵌套主数据组或额外主数组。
-2. **B02** `data` 维度准确为 `(time, channel, lat, lon)`，shape 与冻结实例一致，原始 dtype 为 `float16`。
+2. **B02** `data` 维度准确为 `(time, channel, lat, lon)`，shape 与冻结实例一致，原始 dtype 与 YAML 一致；当前十套均为 `float16`，程序也支持显式 `float32`。
 3. **B03** 主块准确为 `(1, C, H, W)`。块边界从冻结 shape/chunks 计算，先确定预期数量和索引范围，再访问数据。
 4. **B04** 其余数组维度、shape、原始 dtype 符合下表；禁止隐式转换后再判断。
 5. **B05** v3 `dimension_names` 与读取对象一致；若同时存在旧 `_ARRAY_DIMENSIONS`，二者必须一致。
@@ -119,7 +128,7 @@
 
 ### I. 原始主数据块读取与检查
 
-1. **I01** 指定块严格只读；保留原始 shape/dtype/编码和异常，禁止把读取异常吞成 None、替换成填充值或使用 core 适配后值。
+1. **I01** 指定块严格只读；保留原始 shape/dtype/编码和异常，禁止把读取异常吞成 None、替换成填充值或使用下游适配后值。
 2. **I02** 每个已选块读回 shape 必须与逻辑块边界一致，原始 dtype 为 float16。
 3. **I03** 原始所有通道不得有正负 Inf；tp 的有限存储值必须非负，符合已确认 clip_min(0)→log1p 处理域。
 4. **I04** 记录每通道已检值数、NaN/Inf 数、有限值比例、有限值最小/最大值和常数块数；诊断统计不另行产生阈值判定。
@@ -130,7 +139,7 @@
 1. **J01** 坐标、统计量、掩膜等小数组在 quick/full 均检查全部预期物理块键；成功返回 fill_value 不等于存在块。
 2. **J02** quick 核查被抽样主块的物理键；full 核查全部预期主块，且核查主数组目录无意外块键。
 3. **J03** 分别统计成功读取、读取失败、未扫描，以及物理存在、经规则允许省略、未批准缺失、存储未知；两套计数分别与预期总数守恒。
-4. **J04** 本批十份 profile 无允许省略块。日后采用稀疏省略时，须提前显式列出逻辑索引并绑定独立生产证明；不能从实际缺块倒推规则。
+4. **J04** 本批十份 YAML 无允许省略块。日后采用稀疏省略时，须提前显式列出逻辑索引并绑定独立生产证明；不能从实际缺块倒推规则。
 5. **J05** 扫描前后元数据摘要一致，逐块检查文件指纹变化；发现变化失败。
 6. **J06** full 完成还须有独立冻结的生产记录，绑定 dataset_id、data_revision、snapshot_id、shape、预期块数、允许省略表、complete=true 及 writes-stopped/immutable-snapshot 状态，并通过预先冻结的 SHA256。
 7. **J07** quick 不要求 J06 的生产证明来判定抽样格式通过；缺失证明单列为未执行的发布条件，不能用于允许缺块。
@@ -138,7 +147,7 @@
 
 ### K. 报告和结论
 
-1. **K01** 报告绑定 dataset_id、产品/配置/掩膜/工具版本、data_revision、路径、profile SHA256、run_id、模式和已检范围。
+1. **K01** 报告绑定 dataset_id、产品/配置/模板/掩膜/工具版本、data_revision、路径、YAML SHA256、run_id、模式和已检范围；验收报告及转换回执不得跨标准复用。
 2. **K02** 保存 JSON 逐项结果、summary.csv、summary.md、batch.json 和 blocks.jsonl；记录状态、位置、依据、覆盖数、连续完成范围、耗时和内存。
 3. **K03** `pass` 为已执行通过；`fail` 为违反已纳入规则；`warning` 不阻断；`not-applicable` 为范围外；`not-run/blocked` 不能被描述为已通过。
 4. **K04** `quick_passed=true` 要求完成预定抽样、各项适用 quick 检查通过且未中断。不能因尚无 fail 就认定完成；max-blocks 截断 quick 也不通过。
@@ -169,7 +178,7 @@
 
 ### 5.1 cra.c71 / p25.h6
 
-- 产品标准：`cra.c71/1.0`；实例配置：`cra_c71_p25_h6.json`。
+- 产品标准：`cra.c71/1.0`；独立标准：`cra_c71_p25_h6.yaml`。
 - 根 ID：`cra.1979_2025.c71.p25.h6.v1`；目录：`cra.19790101_20260714.c71.p25.h6.v1`；修订号：`20260921`。
 - 时间：`1979-01-01T00:00:00.000000000` 至 `2026-07-14T18:00:00.000000000`，UTC 每 6 小时，共 69,448 个时刻。
 - 主 shape：`(69448, 71, 721, 1440)`；chunk：`(1, 71, 721, 1440)`。
@@ -193,7 +202,7 @@ tp
 
 ### 5.2 cra.c87 / p25.h24
 
-- 产品标准：`cra.c87/1.0`；实例配置：`cra_c87_p25_h24.json`。
+- 产品标准：`cra.c87/1.0`；独立标准：`cra_c87_p25_h24.yaml`。
 - 根 ID：`cra.1979_2024.c87.p25.h24.v1`；目录：`cra.1979_2024.c87.p25.h24.v1`；修订号：`20260920`。
 - 时间：`1979-01-01T00:00:00.000000000` 至 `2024-12-31T00:00:00.000000000`，UTC 每 24 小时，共 16,802 个时刻。
 - 主 shape：`(16802, 87, 721, 1440)`；chunk：`(1, 87, 721, 1440)`。
@@ -219,7 +228,7 @@ tcc, ssr, ssrd, fdir, ttr, tcw, tp
 
 ### 5.3 cra.c87 / 1p5.h24
 
-- 产品标准：`cra.c87/1.0`；实例配置：`cra_c87_1p5_h24.json`。
+- 产品标准：`cra.c87/1.0`；独立标准：`cra_c87_1p5_h24.yaml`。
 - 根 ID：`cra.1979_2025.c87.1p5.h24.v1`；目录：`cra.1979_2025.c87.1p5.h24.v1`；修订号：`20260921`。
 - 时间：`1979-01-01T00:00:00.000000000` 至 `2025-12-31T00:00:00.000000000`，UTC 每 24 小时，共 17,167 个时刻。
 - 主 shape：`(17167, 87, 121, 240)`；chunk：`(1, 87, 121, 240)`。
@@ -245,7 +254,7 @@ tcc, ssr, ssrd, fdir, ttr, tcw, tp
 
 ### 5.4 era5.c87 / p25.h24
 
-- 产品标准：`era5.c87/1.0`；实例配置：`era5_c87_p25_h24.json`。
+- 产品标准：`era5.c87/1.0`；独立标准：`era5_c87_p25_h24.yaml`。
 - 根 ID：`era5.1959_2025.c87.p25.h24.v1`；目录：`era5.1959_2025.c87.p25.h24.v1`；修订号：`20260922`。
 - 时间：`1959-01-01T00:00:00.000000000` 至 `2025-12-31T00:00:00.000000000`，UTC 每 24 小时，共 24,472 个时刻。
 - 主 shape：`(24472, 87, 721, 1440)`；chunk：`(1, 87, 721, 1440)`。
@@ -271,7 +280,7 @@ tcc, ssr, ssrd, fdir, ttr, tcw, tp
 
 ### 5.5 era5.c78 / p25.h6
 
-- 产品标准：`era5.c78/1.0`；实例配置：`era5_c78_p25_h6.json`。
+- 产品标准：`era5.c78/1.0`；独立标准：`era5_c78_p25_h6.yaml`。
 - 根 ID：`era5.1979_2024.c78.p25.h6.v1.xujn`；目录：`era5.1979_2024.c78.p25.h6.v1`；修订号：`20260921`。
 - 时间：`1979-01-01T00:00:00.000000000` 至 `2024-12-31T18:00:00.000000000`，UTC 每 6 小时，共 67,208 个时刻。
 - 主 shape：`(67208, 78, 721, 1440)`；chunk：`(1, 78, 721, 1440)`。
@@ -296,7 +305,7 @@ u100m, v100m, msl, ssr, ssrd, fdir, ttr, tp
 
 ### 5.6 era5.c116 / p25.h6
 
-- 产品标准：`era5.c116/1.0`；实例配置：`era5_c116_p25_h6.json`。
+- 产品标准：`era5.c116/1.0`；独立标准：`era5_c116_p25_h6.yaml`。
 - 根 ID：`era5.202501_202607.c116.p25.h6.v3`；目录：`era5.202501_202607.c116.p25.h6.v3`；修订号：`20260917`。
 - 时间：`2025-01-01T00:00:00.000000000` 至 `2026-07-31T18:00:00.000000000`，UTC 每 6 小时，共 2,308 个时刻。
 - 主 shape：`(2308, 116, 721, 1440)`；chunk：`(1, 116, 721, 1440)`。
@@ -325,7 +334,7 @@ stl2, wmb, mwd, cdww, mwp, swh
 
 ### 5.7 era5-land.c8 / 1p5.h24
 
-- 产品标准：`era5-land.c8/1.0`；实例配置：`era5_land_c8_1p5_h24.json`。
+- 产品标准：`era5-land.c8/1.0`；独立标准：`era5_land_c8_1p5_h24.yaml`。
 - 根 ID：`land.1950_2024.c8.1p5.h24.v1`；目录：`land.1950_2024.c8.1p5.h24.v1`；修订号：`20260920`。
 - 时间：`1950-01-01T00:00:00.000000000` 至 `2024-12-31T00:00:00.000000000`，UTC 每 24 小时，共 27,394 个时刻。
 - 主 shape：`(27394, 8, 121, 240)`；chunk：`(1, 8, 121, 240)`。
@@ -341,7 +350,7 @@ stl1, stl2, stl3, stl4, swvl1, swvl2, swvl3, swvl4
 
 ### 5.8 oras5.c88 / 1p5.h24
 
-- 产品标准：`oras5.c88/1.0`；实例配置：`oras5_c88_1p5_h24.json`。
+- 产品标准：`oras5.c88/1.0`；独立标准：`oras5_c88_1p5_h24.yaml`。
 - 根 ID：`oras5.1993_2024.c88.1p5.h24.v1`；目录：`oras5.1993_2024.c88.1p5.h24.v1`；修订号：`20260923`。
 - 时间：`1993-01-01T00:00:00.000000000` 至 `2024-12-31T00:00:00.000000000`，UTC 每 24 小时，共 11,688 个时刻。
 - 主 shape：`(11688, 88, 121, 240)`；chunk：`(1, 88, 121, 240)`。
@@ -366,7 +375,7 @@ ov27135, ov33386, ov41179, ov50863, sit, ssh, sic, mlt
 
 ### 5.9 oras5.c88 / p25.h24
 
-- 产品标准：`oras5.c88/1.0`；实例配置：`oras5_c88_p25_h24.json`。
+- 产品标准：`oras5.c88/1.0`；独立标准：`oras5_c88_p25_h24.yaml`。
 - 根 ID：`oras5.1993_2024.c88.p25.h24.v1`；目录：`oras5.1993_2024.c88.p25.h24.v1`；修订号：`20260923`。
 - 时间：`1993-01-01T00:00:00.000000000` 至 `2024-12-31T00:00:00.000000000`，UTC 每 24 小时，共 11,688 个时刻。
 - 主 shape：`(11688, 88, 721, 1440)`；chunk：`(1, 88, 721, 1440)`。
@@ -391,7 +400,7 @@ ov27135, ov33386, ov41179, ov50863, sit, ssh, sic, mlt
 
 ### 5.10 s2s.c76 / 1p5.h24
 
-- 产品标准：`s2s.c76/1.0`；实例配置：`s2s_c76_1p5_h24.json`。
+- 产品标准：`s2s.c76/1.0`；独立标准：`s2s_c76_1p5_h24.yaml`。
 - 根 ID：`s2s.1950_2026.c76.1p5.h24.v1`；目录：`s2s.19500101_20260417.c76.1p5.h24.v1`；修订号：`20260921`。
 - 时间：`1950-01-01T00:00:00.000000000` 至 `2026-04-17T00:00:00.000000000`，UTC 每 24 小时，共 27,866 个时刻。
 - 主 shape：`(27866, 76, 121, 240)`；chunk：`(1, 76, 121, 240)`。
@@ -425,26 +434,28 @@ v10m, u100m, v100m, msl, tcwv, tp
 未设阈值的诊断不能伪装成物理质量判定。
 
 ```bash
-python -m pytest tests/validation -q
+python -m pytest tests/dataset_building/acceptance -q
 ```
 
 ### 6.2 十套 quick
 
 ```bash
-python -m examples.validation.validate_standard_dataset \
-  --inventory examples/validation/profiles/inventory.json \
+python -m examples.dataset_building.validate_standard_dataset \
+  --schema-directory examples/dataset_building/configs/standards \
   --mode quick --sample-blocks 3 \
   --output /workspace/xujn/validation-reports/quick-YYYYMMDD-HHMMSS
 ```
 
 ### 6.3 单套 full
 
-先准备 J06 生产记录及独立 SHA256，在对应批次 profile 中填写生产引用和 snapshot_id。
+先冻结 YAML，准备 J06 生产记录及独立 SHA256，在单独运行 JSON 中用 `schema`
+引用该 YAML，在 `execution` 中填写 `production_evidence: {path, sha256}` 和 `snapshot_id`。
+不要向 YAML 回写运行回执；运行 JSON 格式见 [使用说明](../DATASET_VALIDATION.md)。
 正式命令不传 max-blocks；存在规则失败或证据缺失时保留原结果，不补造通过证据。
 
 ```bash
-python -m examples.validation.validate_standard_dataset \
-  --profile examples/validation/profiles/era5_land_c8_1p5_h24.json \
+python -m examples.dataset_building.validate_standard_dataset \
+  --run-config /workspace/xujn/validation-runs/land-full.json \
   --mode full \
   --output /workspace/xujn/validation-reports/land-full-YYYYMMDD-HHMMSS
 ```

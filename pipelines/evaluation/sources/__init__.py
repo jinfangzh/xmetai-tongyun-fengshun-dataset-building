@@ -1,4 +1,4 @@
-"""Evaluation data-source adapters; raw dataset access lives in datakit.io and examples.dataset_io."""
+"""Evaluation adapters; raw dataset declarations are loaded from config/data_sources YAML."""
 
 from .climatology import ClimatologyCatalog, ClimatologyReader
 from .gridded import GriddedCatalog, GriddedReader

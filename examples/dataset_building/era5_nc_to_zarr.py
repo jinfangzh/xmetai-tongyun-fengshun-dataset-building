@@ -11,8 +11,6 @@ from datakit import io as dataset_io
 from datakit.transforms import normalize_xarray, preprocess_channel_units
 from pipelines.dataset import convert_to_zarr
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
 EXAMPLE_DATA_ROOT = Path("/workspace/data/Datakit_database/example/era5_nc_to_zarr")
 DEFAULT_SOURCE = EXAMPLE_DATA_ROOT / "nc"
 DEFAULT_DESTINATION = Path("/workspace/data/Datakit_database/output/era5_nc_to_zarr/output.zarr")

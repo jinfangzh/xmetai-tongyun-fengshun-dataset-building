@@ -41,11 +41,21 @@ class _DatasetAccess:
                 "layout": {},
             }
         )
-        self._backend = (
-            backend
-            if backend is not None
-            else (file_collection if self.layout["layout"] else files)
-        )
+        if backend is not None:
+            self._backend = backend
+        elif self.layout.get("format", {}).get("name") in {
+            "diamond_station",
+            "station_probability",
+        }:
+            from .backends import station_tables
+
+            self._backend = station_tables
+        elif self.layout.get("format", {}).get("name") == "babj":
+            from .backends import babj
+
+            self._backend = babj
+        else:
+            self._backend = file_collection if self.layout["layout"] else files
 
     def _records(self, selection, all_files):
         selection = {**self.selection, **(selection or {})}

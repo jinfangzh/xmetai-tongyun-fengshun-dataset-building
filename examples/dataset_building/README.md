@@ -1,45 +1,90 @@
-# 数据集制作工作流
+# 数据集制作与标准验收
 
-本目录提供面向具体数据产品的制作任务。输入是源文件、已有数据集、统计量和掩膜等，
-脚本按约定组织通道、单位、归一化和元数据，输出可供训练、后续处理或校验使用的数据集。
-底层读写复用开源接口，公共步骤复用 `datakit` 和 `pipelines.dataset`。
+本目录放置生成数据集和验收构建结果的任务入口。按下面的输入与目标选择脚本：
 
-## 选择任务
+| 目标 | 入口 | 输入与输出 |
+| --- | --- | --- |
+| 制作 ERA5 归一化数据集 | `era5_nc_to_zarr.py` | 日 NetCDF、mean/std、mask → 归一化 Zarr |
+| 制作 ORAS5 88 通道数据集 | `oras5_nc_to_zarr_88.py` | 通道 NetCDF、mean/std、mask → 归一化 Zarr |
+| 按产品标准验收 | `validate_standard_dataset.py` | 数据集、YAML 标准或执行 JSON → quick/full 报告 |
+| 检查转换数值保真 | `validate_standard_conversion.py` | 源、目标和转换规则 JSON → 转换对照报告 |
 
-| 入口 | 输入与输出 |
-| --- | --- |
-| `era5_nc_to_zarr.py` | ERA5 NetCDF、均值、标准差和 mask → 预处理并归一化的 Zarr |
-| `oras5_nc_to_zarr_88.py` | ORAS5 源数据及统计量 → 按所选通道制作的归一化 Zarr |
-| `legacy_zarr_refresh/` | 已归一化的旧 Zarr → 通道、坐标及附属量对齐后的新数据集 |
+预处理原始 NetCDF、单位转换和导出切片见
+[dataset_processing](../dataset_processing/README.md)；基础 NetCDF/Zarr 数值对照见
+[validation](../validation/README.md)。本包不转导出公共函数，程序调用使用
+`pipelines.dataset` 的转换/提取接口及 `pipelines.dataset_building` 的验收接口。
 
-旧 Zarr 整理是独立任务，处理约定仍由其配置描述，当前未纳入 `datakit` 公共 API。
-说明和命令见 [旧 Zarr 整理](legacy_zarr_refresh/README.md)。
+## 从 NetCDF 制作归一化 Zarr
 
-## 运行 ERA5 制作任务
-
-在仓库根目录安装依赖，并将路径替换为实际输入：
+在仓库根目录运行，按实际资料指定路径。两个制作脚本都需要与所选通道匹配的统计量和 mask：
 
 ```bash
-python -m pip install -e '.[io,parallel]'
 python -m examples.dataset_building.era5_nc_to_zarr \
-  --source /data/era5/nc \
-  --destination /data/output/era5.zarr \
-  --mean-nc /data/era5/stats/mean.nc \
-  --std-nc /data/era5/stats/std.nc \
-  --mask-nc /data/era5/stats/mask.nc \
-  --accumulation-hours 6
+  --source /data/era5/daily --destination /data/output/era5.zarr \
+  --mean-nc /data/era5/mean.nc --std-nc /data/era5/std.nc \
+  --mask-nc /data/era5/mask.nc --accumulation-hours 6
+
+python -m examples.dataset_building.oras5_nc_to_zarr_88 \
+  --source /data/oras5/channels --destination /data/output/oras5.zarr \
+  --mean-nc /data/oras5/mean.nc --std-nc /data/oras5/std.nc \
+  --mask-nc /data/oras5/mask.nc
 ```
 
-均值、标准差、通道和累计时长应与输入的物理含义对应。
-该脚本会删除已有目标目录后重新生成产物，运行前应确认 `--destination`。
-ORAS5 任务的参数可用以下命令查看：
+这些制作入口按脚本参数写出产物，不读取目标 YAML 来保证符合完整标准；
+需要标准产物时，另行执行下方验收。不要对已归一化的 Zarr 重复执行归一化。
+更多选择参数先运行相应模块的 `--help`；脚本中的服务器路径默认值需要替换。
+
+## Standard dataset validation
+
+具体产品的标准 YAML 位于 [`configs/standards`](configs/standards)，不随基础库安装包分发；
+通用模型与严格加载器位于 `datakit.schema.datasets`，由调用方显式传入 YAML 路径。
+转换对照配置模板位于本目录的 `configs/`。两个验收入口负责参数、信号和退出码，
+检查、扫描、证据绑定及报告由
+[`pipelines.dataset_building`](../../pipelines/dataset_building/README.md) 实现：
+
+- `validate_standard_dataset.py`：按一份或多份独立 YAML 检查数据集。
+- `validate_standard_conversion.py`：按显式规则比较冻结的源与目标。
+
+Run from the repository root:
 
 ```bash
-python -m examples.dataset_building.oras5_nc_to_zarr_88 --help
+python -m examples.dataset_building.validate_standard_dataset \
+  --schema-directory examples/dataset_building/configs/standards \
+  --mode quick --sample-blocks 3 --output /path/outside/data/reports
 ```
 
-## 检查产物并交给后续步骤
+For one dataset, use `--schema examples/dataset_building/configs/standards/era5_land_c8_1p5_h24.yaml`.
+Multiple paths may follow `--schema`; do not combine multi-dataset selection with
+a single `--dataset-path` override. Old profile/inventory options are removed.
+Conversion JSON configurations reference YAML through `target_schema`. Relative paths
+are resolved against the containing configuration, including evidence paths.
+Reports and independent evidence remain JSON. A quick pass verifies the
+selected main-data blocks and complete metadata/coordinate checks. A full scan
+requires `--mode full` without `--max-blocks`, plus the applicable physical
+coverage and production completion evidence. See the
+[validation guide](../../docs/DATASET_VALIDATION.md) for report fields and tests.
 
-写出后，按实际产品选择 profile，运行 [数据校验任务](../validation/README.md)。
-需要反归一化、时间提取或 NetCDF 导出时，使用 `examples/dataset_processing/` 下的任务。
-代码修改可运行 `tests/test_era5_nc_to_zarr.py` 和 `tests/test_oras5_nc_to_zarr_88.py`。
+For a frozen run, use `--run-config path/to/run.json` instead of `--schema`.
+This JSON references the unchanged YAML and supplies an `execution` object with
+`snapshot_id`, receipt `{path, sha256}` references and applicable requirements.
+Runtime production/conversion receipts are not accepted inside YAML.
+Adding a receipt to execution JSON does not change the YAML hash bound by it.
+Conversion configurations also accept this
+nested `execution` object. A run cannot disable a schema-required evidence gate.
+
+Core reader probes and consumer/model receipt checks have been removed. The
+two validation CLIs cover data format, integrity, quality and conversion fidelity,
+not model compatibility. Retired
+`consumer_required`, `consumer_evidence` and `model_evidence` settings are rejected.
+JSON/CSV/Markdown reports no longer expose a consumer-compatibility conclusion.
+
+Combination validation, its CLI and configuration template have also been removed.
+Selecting multiple YAMLs or run configurations still validates each dataset
+independently; it does not impose shared time, grid or mask requirements or
+produce a joint-use conclusion. Tool version `1.8` removes the
+`cross_dataset_compatibility` report category and `combination.scope` check.
+Historical reports are not rewritten.
+
+Program regression tests live in `tests/dataset_building/acceptance/`; they use small fixtures
+and injected faults. Passing these tests does not establish that server data
+has passed validation.

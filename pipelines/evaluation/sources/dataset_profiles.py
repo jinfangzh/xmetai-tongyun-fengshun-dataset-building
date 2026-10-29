@@ -1,22 +1,17 @@
-"""评估变量、分组及报告单位；原始数据组织来自 examples.dataset_io。"""
+"""评估变量、分组及报告单位；原始数据组织来自 config/data_sources。"""
 
 from dataclasses import replace
 
+from datakit.io import get_description, source_config
 from datakit.schema.mapping import VarSpec, load_mapping
 from datakit.schema.semantics import DataKind
-from examples.dataset_io import (
-    analysis_cra,
-    forecast_fengqing,
-    forecast_fuxi,
-    observation_diamond,
-)
 from pipelines.evaluation.sources._profile import (
     DatasetProfile,
     build_profile,
 )
 
 CRA_LAYOUT = replace(
-    build_profile(analysis_cra.DESCRIPTION),
+    build_profile(get_description(source_config("analysis_cra"))),
     name="cra",
     kind=DataKind("gridded_observation"),
     engine="cfgrib",
@@ -64,7 +59,7 @@ CRA_LAYOUT = replace(
 )
 
 FENGQING_LAYOUT = replace(
-    build_profile(forecast_fengqing.DESCRIPTION),
+    build_profile(get_description(source_config("forecast_fengqing"))),
     name="fengqing",
     kind=DataKind("gridded_forecast"),
     engine="netcdf",
@@ -217,13 +212,15 @@ CLIMATOLOGY_MAPPING = load_mapping(
     }
 )
 
-DIAMOND_STATION_MAPPING = load_mapping(observation_diamond.DESCRIPTION["mapping"])
+DIAMOND_STATION_MAPPING = load_mapping(
+    get_description(source_config("observation_diamond"))["mapping"]
+)
 
 
 # FuXi evaluation variables and reporting units.
-FUXI_LAYOUT = build_profile(forecast_fuxi.DESCRIPTION)
+FUXI_LAYOUT = build_profile(get_description(source_config("forecast_fuxi")))
 FUXI_ENS_LAYOUT = replace(
-    build_profile(forecast_fuxi.ENSEMBLE_DESCRIPTION),
+    build_profile(get_description(source_config("forecast_fuxi_ensemble"))),
     name="fuxi_ens",
     member_dim="member",
 )

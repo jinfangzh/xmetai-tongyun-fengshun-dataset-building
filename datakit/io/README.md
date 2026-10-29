@@ -10,21 +10,15 @@
 
 ## 准备工作流输入
 
-按数据集组织的访问入口位于 `examples.dataset_io`，例如：
+具体数据集通过 `config/data_sources/*.yaml` 描述，完整用法见
+[统一示例](../../examples/dataset_io/README.md)：
 
 ```python
-from examples.dataset_io import forecast_fuxi
+from datakit import io
 
-source = forecast_fuxi.open(
-    "/data/forecast",
-    ensemble=True,
-    selection={"init_time": ["2025-01-01"], "lead_time": [6, 12]},
-)  # 只保存配置，不扫描文件
-
-with source.read() as raw:
-    # read() 保留源变量名和单位；标准化需要显式调用。
-    standard = forecast_fuxi.normalize(raw, ["z500", "t2m"])
-    result = standard.load()
+source = io.open_dataset("/data/fuxi", io.source_config("forecast_fuxi"))
+with source.read(selection={"init_time": ["2025-01-01"], "lead_time": [6]}) as raw:
+    result = raw.load()
 ```
 
 `io.open_dataset(path, DESCRIPTION)` 接收包含可选变量映射的完整声明，
@@ -61,15 +55,18 @@ Zarr 使用 xarray/Zarr 的默认写入行为；压缩可通过 encoding 指定�
 | `backends/files.py` | 格式识别、单文件或 Store 读写 |
 | `backends/file_collection.py` | 文件发现、路径字段解析、组合和布局写回 |
 | `backends/station_tables.py` | Diamond 文本和概率表格式读写 |
-| `examples/dataset_io/` | 文件组织说明、可选映射及数据集专属入口 |
+| `backends/babj.py` | BABJ 台风报文及源表头保留写回 |
+| `config/data_sources/` | 文件组织说明、可选映射及数据集专属入口 |
 
 `io.open(path, layout=...)` 接受布局字典或 YAML 路径。具体源格式由声明和后端决定，
-特殊文本的数据集入口通过 `backend=` 传入解析模块。数据集专属声明位于
-`examples/dataset_io/`；评测角色和报告单位约定位于 `pipelines/evaluation/sources/`。
+YAML 的 `format.name` 描述数据格式，IO 层选择对应后端，未知格式会报错；
+高级调用仍可显式提供 `backend=`。
+数据集专属声明位于
+`config/data_sources/`；评测角色和报告单位约定位于 `pipelines/evaluation/sources/`。
 
 `schema.DatasetMapping` / `VarSpec` 和 `schema.mapping.apply_dataset_mapping()`
 提供通用映射声明与执行能力。`schema.load_mapping()` 接受映射对象、字典或
-外部 YAML 路径；数据集默认映射从对应的 `examples.dataset_io` 模块获取。
+外部 YAML 路径；数据集默认映射从对应 YAML 的 mapping 声明获取。
 IO 不执行变量语义标准化、单位换算、插值或评估配对。
 
 原生 Zarr（缺少 xarray 维度元数据）由上层通过 Zarr 库访问。

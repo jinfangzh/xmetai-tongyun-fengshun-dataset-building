@@ -98,7 +98,7 @@ def write_file(dataset, path, options):
     if path.exists() and mode not in {"w", "a", "r+"}:
         raise FileExistsError(f"Refusing to overwrite an existing output: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    format_name = infer_format(path)
+    format_name = normalize_format(options.pop("format", None) or infer_format(path))
     if format_name == "zarr":
         chunks = options.pop("chunks", None)
         if chunks is not None:
@@ -289,12 +289,22 @@ def read_numpy(
     return xr.DataArray(values, dims=resolved_dims, coords=coords, name=name)
 
 
+def declared_open_options(description, options):
+    """Use the declared container format unless the caller explicitly overrides it."""
+    options = dict(options)
+    name = description.get("format", {}).get("name")
+    if name in SUPPORTED_FORMATS:
+        options.setdefault("format", name)
+    return options
+
+
 def read_records(records, description, **options):
     """读取已发现的文件记录，供统一入口和逐文件处理复用。"""
     if len(records) != 1:
         raise ValueError(
             "A single-dataset description must locate exactly one file or store"
         )
+    options = declared_open_options(description, options)
     stack = ExitStack()
     try:
         dataset = stack.enter_context(open_xarray(records[0].path, **options))
@@ -316,4 +326,4 @@ def write(dataset, root, description, **options):
         if len(patterns) != 1 or patterns[0][1].fields:
             raise ValueError("Single-dataset output requires a fixed filename")
         root = root / patterns[0][1].render({})
-    return [write_file(dataset, root, options)]
+    return [write_file(dataset, root, declared_open_options(description, options))]

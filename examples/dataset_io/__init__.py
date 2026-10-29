@@ -1,1 +1,1 @@
-"""具体数据集的组织说明、声明和接入示例；公共能力由 datakit 提供。"""
+"""YAML-driven dataset IO usage example."""

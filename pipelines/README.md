@@ -9,6 +9,13 @@
 
 ## 数据集工作流
 
+`datakit.schema.datasets` 提供通用标准模型及严格 YAML 加载器；具体产品 YAML 位于
+`examples/dataset_building/configs/standards/`，由调用方显式传入。
+`pipelines.dataset_building` 按 production、checks、workflows、support 隔离生产定义、
+验收规则、quick/full 扫描、执行配置与报告；基础库不依赖该流程包。
+`pipelines.dataset` 的单套验收和转换对照入口转发到独立流程，组合验收已移除。
+详见 [数据集构建与标准校验](dataset_building/README.md)。
+
 `pipelines.dataset` 提供数据集转换、提取、导出及校验任务：
 
 | 任务 | 公开入口 |
@@ -18,7 +25,7 @@
 | 按时间、通道拆分 NetCDF | `split_netcdf_by_time_and_channel` |
 | 提取原始实况 | `extract_raw_truth_day` |
 | 按产品标准检查数据集 | `validate_standard_dataset` |
-| 比较转换、组合及 Zarr/NetCDF 一致性 | `validate_standard_conversion`、`validate_standard_combination`、`validate_zarr_netcdf_consistency` |
+| 比较转换及 Zarr/NetCDF 一致性 | `validate_standard_conversion`、`validate_zarr_netcdf_consistency` |
 
 从包入口导入所需任务，例如将工作流已准备好的 Dataset 写成产物：
 
@@ -35,7 +42,7 @@ convert_to_zarr(
 `prepared_dataset` 由前面的处理步骤提供，调用方应先完成相应变量、坐标和单位处理。
 归一化数据的导出需要匹配的均值与标准差。实际 ERA5、ORAS5 制作任务见
 [数据集制作](../examples/dataset_building/README.md)，完整检查见
-[校验任务](../examples/validation/README.md)。
+[标准数据集校验](../docs/DATASET_VALIDATION.md)。
 
 ## 预报数据评测工作流
 

@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+import numpy as np
 import zarr
 
 from datakit.io.backends.files import local_path
@@ -283,3 +284,8 @@ def open_zarr_array_readonly(path: str | Path, name: str) -> Iterator[Any]:
         close = getattr(store, "close", None)
         if close is not None:
             close()
+
+
+def read_zarr_block(array: Any, selection: tuple[slice, ...]) -> np.ndarray:
+    """Decode exactly the requested logical slice; errors propagate unchanged."""
+    return np.asarray(array[selection])

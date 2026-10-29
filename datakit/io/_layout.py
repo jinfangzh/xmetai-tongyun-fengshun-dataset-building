@@ -11,6 +11,30 @@ from string import Formatter
 from typing import Any
 
 
+def source_config(name: str, *, directory: str | Path | None = None) -> Path:
+    """Locate a named YAML declaration in an explicit, checkout or installed directory.
+
+    Arbitrary external YAML paths can be passed directly to get_description() and
+    open_dataset(). This helper only locates the shipped dataset declarations.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+        raise ValueError("Source configuration name must be a simple filename stem")
+    if directory is None:
+        import sysconfig
+
+        roots = [
+            Path(__file__).resolve().parents[2] / "config" / "data_sources",
+            Path(sysconfig.get_path("data")) / "config" / "data_sources",
+        ]
+    else:
+        roots = [Path(directory).expanduser()]
+    for root in roots:
+        path = root / f"{name}.yaml"
+        if path.is_file():
+            return path
+    raise FileNotFoundError(f"Source configuration {name!r} not found in {roots}")
+
+
 def get_description(value: str | Path | Mapping[str, Any]) -> dict[str, Any]:
     """Load an explicit declaration or return an independent copy."""
     if isinstance(value, Mapping):
@@ -22,7 +46,7 @@ def get_description(value: str | Path | Mapping[str, Any]) -> dict[str, Any]:
         if not candidate.is_file():
             raise ValueError(
                 "IO requires an explicit layout mapping or YAML path; "
-                "named datasets are configured in examples.dataset_io"
+                "dataset declarations are YAML files in config/data_sources"
             )
         result = yaml.safe_load(candidate.read_text(encoding="utf-8"))
     if not isinstance(result, dict):
@@ -57,6 +81,21 @@ def load_layout(value: str | Path | Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError(f"Unknown layout fields: {sorted(unknown)}")
     if "format" in result and not isinstance(result["format"], dict):
         raise TypeError("format must be a mapping")
+    format_name = result.get("format", {}).get("name")
+    if format_name is not None and (
+        not isinstance(format_name, str)
+        or format_name
+        not in {
+            "netcdf",
+            "grib",
+            "zarr",
+            "numpy",
+            "diamond_station",
+            "station_probability",
+            "babj",
+        }
+    ):
+        raise ValueError(f"Unsupported dataset format: {format_name!r}")
     if not isinstance(result["layout"], dict):
         raise TypeError("layout must be a mapping")
     allowed_layout = {"directory", "filename", "files", "groups", "pattern"}

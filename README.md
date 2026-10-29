@@ -36,40 +36,42 @@ xmetai-datakit-server/
 │   └── runtime/                日志和运行资源工具
 ├── pipelines/                  可复用的数据处理与评测工作流
 │   ├── dataset/                数据集转换、导出和校验
+│   ├── dataset_building/       独立生产定义、构建产物验收与报告
 │   └── evaluation/             数据适配、配对、评测执行和结果输出
 ├── examples/                   具体数据和任务的使用入口
-│   ├── dataset_io/             数据组织说明、读取规则和变量映射
-│   ├── dataset_building/       数据集制作脚本
+│   ├── dataset_io/             YAML 驱动的统一读取与导出示例
+│   ├── dataset_building/       数据集制作及 YAML 标准验收入口
 │   ├── dataset_processing/     数据处理与导出脚本
 │   ├── dataset_downloader/     数据下载方案
-│   ├── validation/             数据校验脚本和配置
+│   ├── validation/             基础 NetCDF/Zarr 对照示例
 │   └── evaluation/             评测配置和运行脚本
+├── config/data_sources/        独立数据源 YAML 声明
 ├── tests/                      单元测试与集成测试
 └── docs/                       数据标准、校验规范和运行说明
 ```
 
 `datakit` 提供变量约定、数据转换、质量检查和指标计算等基础组件，IO 层衔接开源数据接口。
 `pipelines` 将这些组件组织成完整任务，例如制作数据集或完成一次预报数据评测。
-`examples` 保存具体数据集的接入实现和实际运行脚本，指定数据路径、处理范围与输出位置。
+`examples` 保存完整调用示例和实际运行脚本，指定数据路径、处理范围与输出位置。
 使用现有工作流时，通常从对应的脚本或配置开始。
 
-依赖方向是 `pipelines → datakit / examples.dataset_io`，以及 `examples.dataset_io → datakit`。
-`datakit` 核心模块不依赖 `pipelines` 或 `examples`；原始数据集模块不依赖评测流程。
+依赖方向是 `examples → pipelines / datakit`、`pipelines → datakit`。
+源数据访问声明独立位于 `config/data_sources/`；基础库和评测不导入示例模块。
 
 ### 数据集接入
 
 数据接入遵循一个原则：**先读取原始数据，再显式进行标准化。**
 
 FuXi、Fengqing、CRA、Diamond 等具有特定文件组织的数据，入口位于
-`examples/dataset_io/`。每个文件开头先说明目录组织、文件内容和时间含义，再声明
+`config/data_sources/`。每份 YAML 描述目录组织、文件内容和时间含义，并声明
 必要的读取规则，让工作流能够按时间、变量、预报时效等条件定位和取得数据。
 不同数据集保留自己的差异，不要求套用相同的参数模板。
 
 底层 NetCDF、GRIB、NumPy、Zarr 读写复用成熟开源接口。标准文件可以直接使用 xarray、
-Zarr 或 NumPy；需要按数据集规则发现、筛选和组合文件时，使用数据集接入模块。
+Zarr 或 NumPy；需要按数据集规则发现、筛选和组合文件时，通过 YAML 声明调用通用 IO。
 
 变量映射可以省略，也可以只描述部分变量。映射说明源变量与标准变量的对应关系，
-不是读取白名单。原始读取保留源变量名和单位，显式调用 `normalize()` 时才执行映射和换算。
+不是读取白名单。原始读取保留源变量名和单位，显式调用 `normalize_dataset()` 时才执行映射和换算。
 
 单位换算、对数变换和归一化的顺序由具体任务明确安排。制作与反归一化导出应使用匹配的
 通道、统计量和处理约定；产品结构与校验标准见 [标准数据集校验](docs/DATASET_VALIDATION.md)。
@@ -99,10 +101,12 @@ Zarr 或 NumPy；需要按数据集规则发现、筛选和组合文件时，使
 
 | 任务或职责 | 查看位置 |
 | --- | --- |
-| 数据集制作、导出与校验流程 | `pipelines/dataset/` |
+| 数据集转换、提取与导出 | `pipelines/dataset/` |
+| 独立生产定义、构建产物验收与报告 | `pipelines/dataset_building/` |
 | 具体数据集制作与处理任务 | `examples/dataset_building/`、`examples/dataset_processing/` |
 | 评测配置与运行入口 | `examples/evaluation/` |
-| 某个数据集怎么组织、怎么读 | `examples/dataset_io/` |
+| 某个数据集怎么组织、怎么读 | `config/data_sources/` |
+| 数据接入的完整调用示例 | `examples/dataset_io/io_example.py` |
 | 数据怎么转换、插值或归一化 | `datakit/transforms/` |
 | 数据产品应满足什么标准 | `datakit/schema/` |
 | 数据检查算法 | `datakit/validation/` |
@@ -157,11 +161,13 @@ python -c "import datakit; print('datakit import OK')"
 以 FuXi 集合预报为例：
 
 ```python
-from examples.dataset_io import forecast_fuxi
+from datakit import io
+from datakit.schema.mapping import normalize_dataset
 
-source = forecast_fuxi.open(
+description = io.get_description("config/data_sources/forecast_fuxi_ensemble.yaml")
+source = io.open_dataset(
     "/data/fuxi",
-    ensemble=True,
+    description,
     selection={
         "init_time": ["2025-01-01"],
         "lead_time": [6, 12],
@@ -171,7 +177,7 @@ source = forecast_fuxi.open(
 records = source.discover()  # 只定位文件，不读取数据正文。
 
 with source.read() as raw:
-    standard = forecast_fuxi.normalize(raw, ["z500", "t2m"])
+    standard = normalize_dataset(raw, ["z500", "t2m"], description)
     result = standard.load()
 ```
 
@@ -212,17 +218,19 @@ python -m examples.dataset_processing.era5_zarr_to_nc \
 
 ### 4. 检查数据集
 
-标准数据集通过 profile 描述产品结构、覆盖范围和校验要求，再执行检查：
+标准数据集通过独立 YAML 描述产品结构、覆盖范围和校验要求，再执行检查。
+十份产品验收标准位于 `examples/dataset_building/configs/standards/`，运行配置、证据绑定和报告由
+`pipelines/dataset_building/` 组织，基础库不依赖该流程包：
 
 ```bash
-python -m examples.validation.validate_standard_dataset \
-  --profile examples/validation/profiles/era5_c116_p25_h6.json \
+python -m examples.dataset_building.validate_standard_dataset \
+  --schema examples/dataset_building/configs/standards/era5_c116_p25_h6.yaml \
   --dataset-path /data/era5.zarr \
   --mode quick \
   --output outputs/validation/era5
 ```
 
-profile 必须与实际数据产品对应。`quick` 用于结构和预定抽样检查，完整扫描使用 `full`。
+YAML 标准必须与实际数据产品对应。`quick` 用于结构和预定抽样检查，完整扫描使用 `full`。
 quick 通过不代表完整扫描或发布验收通过。报告输出目录必须位于输入数据目录之外。
 
 产品标准、十套配置和服务器运行说明见 [标准数据集校验](docs/DATASET_VALIDATION.md)。
@@ -283,7 +291,7 @@ python -m pytest tests/evaluation/integration -m realdata -q
 ```
 
 资料位置与覆盖范围按各测试及其 fixture 约定，缺少资料时相应用例会跳过。
-完整数据集校验测试位于 `tests/validation/`。运行全仓库测试使用 `python -m pytest`。
+构建、转换和完整数据集校验测试位于 `tests/dataset_building/`。运行全仓库测试使用 `python -m pytest`。
 
 CDS 与 Copernicus Marine 的下载方式分别见
 [CDS 下载说明](examples/dataset_downloader/cds_download/README.md) 和

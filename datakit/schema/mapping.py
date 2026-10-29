@@ -232,6 +232,14 @@ def profile_mapping(profile) -> DatasetMapping:
 
 
 def normalize_dataset(dataset, variables, description, *, profile=None):
+    if isinstance(description, (str, Path)):
+        import yaml
+
+        description = yaml.safe_load(
+            Path(description).expanduser().read_text(encoding="utf-8")
+        )
+    if not isinstance(description, Mapping):
+        raise TypeError("Dataset description must be a mapping or YAML path")
     if profile is None and "mapping" not in description:
         return dataset[list(variables)]
     mapping = (

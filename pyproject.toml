@@ -57,6 +57,9 @@ all = [
 where = ["."]
 include = ["datakit*", "pipelines*", "examples", "examples.dataset_io*"]
 
+[tool.setuptools.data-files]
+"config/data_sources" = ["config/data_sources/*.yaml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
