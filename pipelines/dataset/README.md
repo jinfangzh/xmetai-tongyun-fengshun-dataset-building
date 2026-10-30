@@ -118,7 +118,6 @@ NetCDF 导出/拆分及转换专项验收仍保留；它们没有被四个核心
 
 四个操作直接使用本页介绍的 Python API。
 ERA5/ORAS5 制作及转换验收入口见 [`examples/dataset_building/history`](../../examples/dataset_building/history/README.md)。
-更详细的证据和发布要求见 [验收说明](../../docs/DATASET_VALIDATION.md)。
 
 旧转换专用的 `ConversionChannelRule`、`ConversionValidationSpec`、`load_conversion_run`
 也集中在 `old/conversion_validation.py`，当前 configuration 不再包含它们。

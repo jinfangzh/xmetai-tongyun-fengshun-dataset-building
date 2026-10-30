@@ -29,7 +29,6 @@ VARIABLES_LIST = [
 
 assert len(VARIABLES_LIST) == 88
 
-
 def get_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="ORAS5 NetCDF -> normalized Zarr")
     parser.add_argument("--source", "--input-root", dest="source", type=Path, default=DEFAULT_SOURCE)

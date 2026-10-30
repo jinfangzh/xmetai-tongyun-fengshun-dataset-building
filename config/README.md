@@ -76,5 +76,5 @@ report = validate_zarr("/data/land.zarr", "config/dataset_specs/era5_land_c8_1p5
 output=None 不保存文件；需要保存时指定 output="/data/reports/land.json"。
 
 陆面转换对照模板见 [land_conversion.json](validation/conversions/land_conversion.json)，
-使用前需要填写实际源路径、快照标识及适用规则。CLI 及报告说明见
-[标准数据集校验](../docs/DATASET_VALIDATION.md)。
+使用前需要填写实际源路径、快照标识及适用规则。转换专项入口见
+[历史制作与转换示例](../examples/dataset_building/history/README.md)。

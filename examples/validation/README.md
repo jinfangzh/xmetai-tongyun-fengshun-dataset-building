@@ -27,5 +27,4 @@ python -m examples.validation.validate_zarr_nc \
 统计量反归一化。两者都不提供标准产物的发布验收结论。
 
 公共 Python 函数从 `datakit.validation` 或 `pipelines.dataset` 导入；本包只提供任务脚本。
-标准、回执、quick/full 报告及迁移说明见
-[标准数据集校验](../../docs/DATASET_VALIDATION.md)。
+标准产物的校验接口见 [数据集工作流](../../pipelines/dataset/README.md)。

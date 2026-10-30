@@ -42,7 +42,7 @@ python -m examples.dataset_processing.era5_zarr_to_nc --help
 
 任务详情见 [数据集接入](dataset_io/README.md)、[制作](dataset_building/README.md)、
 [处理与导出](dataset_processing/README.md)、
-[标准验收](../docs/DATASET_VALIDATION.md)、[基础对照](validation/README.md) 和
+[标准验收](../pipelines/dataset/README.md)、[基础对照](validation/README.md) 和
 [评测与报告](evaluation/README.md)。
 
 `dataset_building` 与 `validation` 的包入口不转导出公共函数；Python 调用直接引用

@@ -16,7 +16,7 @@ meta_info:
   data_revision: '20260921'  # 数据修订标识。
   validation_scope: confirmed-format  # 校验范围标识。
   identity_mapping_evidence: >-
-    Owner-designated refresh baseline, reviewed 2026-10-13: directory cra.19790101_20260714.c71.p25.h6.v1 maps to root dataset_id cra.1979_2025.c71.p25.h6.v1; full time coordinates independently checked. Label does not override actual coverage. Evidence: docs/validation/IDENTITY_BASELINE_2026-10-13.json
+    Owner-designated refresh baseline, reviewed 2026-10-13: directory cra.19790101_20260714.c71.p25.h6.v1 maps to root dataset_id cra.1979_2025.c71.p25.h6.v1; full time coordinates independently checked. Label does not override actual coverage.
 
   time_coverage:
     first: '1979-01-01T00:00:00.000000000'
@@ -100,7 +100,7 @@ meta_info:
         channels: [orography, lsm, coslat, sinlat, coslon, sinlon]  # 附件自身的完整通道顺序。
       weight.npy:
         grid_provenance: >-
-          Review 2026-10-13: complete float32 latitude weight vector has declared axis (1,lat,1) and agrees with mean-normalized cos(latitude) within 5e-7; frozen source/coordinate evidence: docs/validation/PRODUCT_BASELINE_2026-10-13.json
+          Review 2026-10-13: complete float32 latitude weight vector has declared axis (1,lat,1) and agrees with mean-normalized cos(latitude) within 5e-7.
         format: npy
         role: weight
         required: true

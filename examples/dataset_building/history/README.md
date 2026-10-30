@@ -57,7 +57,7 @@ Reports and independent evidence remain JSON. A quick pass verifies the
 selected main-data blocks and complete metadata/coordinate checks. A full scan
 requires `--mode full` without `--max-blocks`, plus the applicable physical
 coverage and production completion evidence. See the
-[validation guide](../../../docs/DATASET_VALIDATION.md) for report fields and tests.
+[dataset workflow](../../../pipelines/dataset/README.md) for the public Python API.
 
 For a frozen run, use `--run-config path/to/run.json` instead of `--schema`.
 This JSON references the unchanged YAML and supplies an `execution` object with

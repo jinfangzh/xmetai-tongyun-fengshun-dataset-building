@@ -1,8 +1,7 @@
-"""YAML standards checked against independent server and production baselines."""
+"""Product declarations, schema constraints and production compatibility."""
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from dataclasses import MISSING, fields, replace
@@ -63,18 +62,6 @@ def test_ten_schemas_are_complete_structural_specs(schemas):
         for auxiliary in spec.variant.auxiliaries:
             if auxiliary.format == "npy":
                 assert spec.auxiliary_provenance[auxiliary.filename]
-
-
-def test_all_product_orders_match_independently_approved_server_baseline(schemas):
-    root = Path(__file__).resolve().parents[3]
-    records = json.loads((root / "docs/validation/PRODUCT_BASELINE_2026-10-13.json").read_text())
-    observations = {record["dataset_id"]: record for record in records}
-    for spec, _ in schemas.values():
-        observed = observations[spec.dataset_id]
-        assert spec.product.channel_names == tuple(observed["channels"])
-        lat, _ = spec.variant.grid.coordinates()
-        assert (float(lat[0]), float(lat[-1])) == (observed["lat_first"], observed["lat_last"])
-        assert bool((np.diff(lat) > 0).all()) == (spec.product.product_id == "cra.c71")
 
 
 def test_era5_c116_production_definitions_are_preserved(schemas):

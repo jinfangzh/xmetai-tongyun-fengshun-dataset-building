@@ -73,7 +73,7 @@ Zarr 或 NumPy；需要按数据集规则发现、筛选和组合文件时，通
 不是读取白名单。原始读取保留源变量名和单位，显式调用 `normalize_dataset()` 时才执行映射和换算。
 
 单位换算、对数变换和归一化的顺序由具体任务明确安排。制作与反归一化导出应使用匹配的
-通道、统计量和处理约定；产品结构与校验标准见 [标准数据集校验](docs/DATASET_VALIDATION.md)。
+通道、统计量和处理约定；产品结构与校验标准见 [`config/dataset_specs`](config/dataset_specs)。
 
 相关说明见 [通用 IO](datakit/io/README.md) 和 [数据集接入](examples/dataset_io/README.md)。
 
@@ -223,7 +223,7 @@ report = validate_zarr("/data/era5.zarr", "config/dataset_specs/era5_c116_p25_h6
 YAML 标准必须与实际数据产品对应。默认完整扫描，抽样检查可指定 mode="quick"。
 output=None 不保存文件；指定报告文件时，路径须位于输入数据和附件目录之外。
 
-产品标准、十套配置和服务器运行说明见 [标准数据集校验](docs/DATASET_VALIDATION.md)。
+产品标准见 [`config/dataset_specs`](config/dataset_specs)，操作接口见 [数据集工作流](pipelines/dataset/README.md)。
 
 ### 5. 运行预报数据评测
 

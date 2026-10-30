@@ -42,7 +42,7 @@ convert_to_zarr(
 `prepared_dataset` 由前面的处理步骤提供，调用方应先完成相应变量、坐标和单位处理。
 归一化数据的导出需要匹配的均值与标准差。实际 ERA5、ORAS5 制作任务见
 [数据集制作](../examples/dataset_building/README.md)，完整检查见
-[标准数据集校验](../docs/DATASET_VALIDATION.md)。
+[数据集工作流](dataset/README.md)。
 
 ## 预报数据评测工作流
 
