@@ -64,8 +64,7 @@ def describe_data(
     lines = [f"{obj.name or '<unnamed>'}: shape={obj.shape}, dims={obj.dims}"]
     if "time" in obj.dims and obj.sizes["time"]:
         lines.append(
-            f"time={obj.time.values[0]}..{obj.time.values[-1]} "
-            f"({obj.sizes['time']})"
+            f"time={obj.time.values[0]}..{obj.time.values[-1]} ({obj.sizes['time']})"
         )
     if "lat" in obj.dims and "lon" in obj.dims:
         lines.append(
@@ -73,11 +72,7 @@ def describe_data(
             f"({obj.lon.values[0]}..{obj.lon.values[-1]})"
         )
     dimension = channel_dim or (
-        "channel"
-        if "channel" in obj.dims
-        else "level"
-        if "level" in obj.dims
-        else None
+        "channel" if "channel" in obj.dims else "level" if "level" in obj.dims else None
     )
     if dimension is None:
         values = np.asarray(obj.values)
@@ -88,8 +83,7 @@ def describe_data(
         for name in selected:
             values = np.asarray(obj.sel({dimension: name}).values)
             lines.append(
-                f"{dimension}={name}: "
-                f"{np.nanmin(values):.6g}..{np.nanmax(values):.6g}"
+                f"{dimension}={name}: {np.nanmin(values):.6g}..{np.nanmax(values):.6g}"
             )
     return "\n".join(lines)
 

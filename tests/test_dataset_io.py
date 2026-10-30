@@ -10,7 +10,7 @@ import xarray as xr
 from datakit import io
 from datakit.evaluation.contracts import DataRequest
 from datakit.io import get_description, get_layout, open_dataset, source_config
-from datakit.schema.mapping import normalize_dataset
+from datakit.schema.mapping import DatasetMapping, apply_dataset_mapping, normalize_dataset
 from pipelines.evaluation.components import (
     _fengqing_source,
     _fuxi_ensemble_source,
@@ -31,7 +31,7 @@ def test_all_source_declarations_load_from_an_external_yaml_directory(tmp_path):
     import shutil
 
     directory = source_config("forecast_fuxi").parent
-    assert len(list(directory.iterdir())) == 10
+    assert len(list(directory.iterdir())) == 9
     for original in directory.iterdir():
         assert original.suffix == ".yaml"
         copied = tmp_path / original.name
@@ -44,11 +44,27 @@ def test_all_source_declarations_load_from_an_external_yaml_directory(tmp_path):
 
 def test_source_yaml_rejects_executable_or_unknown_format_selection(tmp_path):
     declaration = get_description(source_config("forecast_fuxi"))
-    declaration["format"]["name"] = "examples.dataset_io.custom_backend"
+    declaration["format"] = "examples.dataset_io.custom_backend"
     with pytest.raises(ValueError, match="Unsupported dataset format"):
         open_dataset(tmp_path, declaration)
     with pytest.raises(ValueError, match="simple filename"):
         source_config("../forecast_fuxi")
+
+
+@pytest.mark.parametrize("format_value", ["netcdf", {"name": "netcdf"}])
+def test_declared_format_reads_and_writes_without_a_recognized_suffix(tmp_path, format_value):
+    description = {
+        "name": "netcdf_payload",
+        "layout": {},
+        "example": "data.payload",
+        "format": format_value,
+    }
+    expected = xr.Dataset({"temperature": ("row", [280.0, 281.0])})
+    source = open_dataset(tmp_path / "data.payload", description)
+    source.write(expected)
+    with source.read() as result:
+        xr.testing.assert_identical(result, expected)
+    assert description["format"] == format_value
 
 
 def test_evaluation_sources_do_not_import_examples():
@@ -387,9 +403,11 @@ def test_daily_climatology_unpacks_only_when_requested(tmp_path):
         {"data": (("time", "level", "lat"), [[[280.0], [8.0]]])},
         coords={"time": [datetime(2025, 1, 1)], "level": ["T2M", "UNLISTED"], "lat": [30.0]},
     ).to_netcdf(path)
-    with open_dataset(path, source_config("climatology_daily")).read() as raw:
+    with io.open(path).read() as raw:
         assert raw.level.values.tolist() == ["T2M", "UNLISTED"]
-        normalized = normalize_dataset(raw, ["t2m"], source_config("climatology_daily"))
+        normalized = apply_dataset_mapping(
+            raw, DatasetMapping(packed_variable="data", packed_dimension="level"), ["t2m"]
+        )
         np.testing.assert_allclose(normalized.t2m, 280.0)
         assert "data" in raw
 

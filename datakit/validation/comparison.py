@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import json
-from collections.abc import Sequence
-from pathlib import Path
+from itertools import product
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import xarray as xr
 
-from datakit.transforms import denormalize_xarray
+from .structure import check_same_layout
+from .structure import collect_structure as collect_structure
 
 
 def normalize_channel_dim(array: xr.DataArray) -> xr.DataArray:
@@ -49,110 +48,6 @@ def normalize_core_dims(array: xr.DataArray) -> xr.DataArray:
     if "time" not in result.dims and "time" in result.coords:
         result = result.expand_dims(time=[pd.Timestamp(result.time.values)])
     return result
-
-
-def collect_structure(array: xr.DataArray) -> dict[str, object]:
-    """Return a serializable structure summary."""
-
-    return {
-        "dims": list(array.dims),
-        "sizes": {name: int(size) for name, size in array.sizes.items()},
-    }
-
-
-def load_channel_statistic_from_zarr(
-    path: str | Path,
-    name: str,
-    channels: Sequence[Any],
-) -> xr.DataArray:
-    """Load one channel statistic vector from Zarr storage.
-
-    Statistics are resolved from top-level arrays (``mean``/``std``).
-    """
-
-    import zarr
-
-    candidate = Path(path).expanduser() / name
-    if not candidate.exists():
-        raise FileNotFoundError(f"Cannot find zarr statistic {name!r} in {path}")
-    node = zarr.open(str(candidate), mode="r")
-    if isinstance(node, zarr.Group):
-        keys = list(node.array_keys())
-        if not keys:
-            raise FileNotFoundError(f"Cannot find zarr statistic {name!r} in {path}")
-        node = node[keys[0]]
-    values = np.asarray(node[...]).reshape(-1)
-    if len(values) != len(channels):
-        raise ValueError(
-            f"{name} length {len(values)} does not match channel count {len(channels)}"
-        )
-    return xr.DataArray(values, dims=("channel",), coords={"channel": list(channels)})
-
-
-def denormalize_zarr_array(
-    array: xr.DataArray,
-    zarr_path: str | Path,
-    *,
-    log_channels: Sequence[str] = (),
-) -> xr.DataArray:
-    """Denormalize a Zarr-backed channel array using Zarr mean/std statistics."""
-
-    channels = array.channel.values.tolist()
-    mean = load_channel_statistic_from_zarr(zarr_path, "mean", channels)
-    std = load_channel_statistic_from_zarr(zarr_path, "std", channels)
-    return denormalize_xarray(
-        array.astype("float32"),
-        mean,
-        std,
-        channel_dim="channel",
-        log_channels=log_channels,
-    )
-
-
-def validate_structure(
-    array: xr.DataArray,
-    *,
-    required_dims: Sequence[str] = ("time", "channel", "lat", "lon"),
-) -> None:
-    """Validate required dimensions exist and are non-empty."""
-
-    missing = [dim for dim in required_dims if dim not in array.dims]
-    if missing:
-        raise ValueError(f"Missing required dimensions: {missing}")
-
-    for dim in required_dims:
-        if array.sizes.get(dim, 0) <= 0:
-            raise ValueError(f"Dimension {dim!r} is empty")
-
-
-def validate_coordinate_values(array: xr.DataArray) -> None:
-    """Validate core coordinates exist, are non-empty and unique."""
-
-    for coord in ("time", "lat", "lon"):
-        if coord not in array.coords:
-            raise ValueError(f"Missing coordinate: {coord!r}")
-        values = np.asarray(array[coord].values)
-        if values.size == 0:
-            raise ValueError(f"Coordinate {coord!r} is empty")
-        if len(np.unique(values)) != len(values):
-            raise ValueError(f"Coordinate {coord!r} contains duplicates")
-
-    times = pd.DatetimeIndex(pd.to_datetime(array.time.values))
-    if not times.is_monotonic_increasing:
-        raise ValueError("Time coordinate is not monotonically increasing")
-
-
-def validate_channel_values(array: xr.DataArray) -> None:
-    """Validate channel coordinates are present, non-empty and unique."""
-
-    if "channel" not in array.coords:
-        raise ValueError("Missing coordinate: 'channel'")
-    values = array.channel.values.tolist()
-    if not values:
-        raise ValueError("Channel coordinate is empty")
-    as_text = [str(item) for item in values]
-    if len(set(as_text)) != len(as_text):
-        raise ValueError("Channel coordinate contains duplicates")
 
 
 def compare_coordinates(
@@ -199,21 +94,14 @@ def compare_channels(left: xr.DataArray, right: xr.DataArray) -> dict[str, Any]:
     }
 
 
-def validate_same_layout(left: xr.DataArray, right: xr.DataArray) -> None:
-    """Ensure arrays have identical shape and dimension order before elementwise compare."""
-
-    if left.dims != right.dims:
-        raise ValueError(
-            f"Dimension order mismatch: left={left.dims}, right={right.dims}"
-        )
-    if left.shape != right.shape:
-        raise ValueError(f"Shape mismatch: left={left.shape}, right={right.shape}")
-
-
 def compute_bias_mean(left: xr.DataArray, right: xr.DataArray) -> float:
     """Compute elementwise bias mean over finite pairs only."""
 
-    validate_same_layout(left, right)
+    failures = [
+        check for check in check_same_layout(left, right) if check.status == "fail"
+    ]
+    if failures:
+        raise ValueError(failures[0].evidence)
     finite_left = xr.apply_ufunc(np.isfinite, left, dask="allowed")
     finite_right = xr.apply_ufunc(np.isfinite, right, dask="allowed")
     finite_mask = finite_left & finite_right
@@ -289,11 +177,167 @@ def build_statistics_diff(
     }
 
 
-def save_report_json(path: str | Path, payload: dict[str, object]) -> None:
-    """Save a validation report as UTF-8 JSON."""
+def _blocks(shape, max_elements):
+    block = [1] * len(shape)
+    for axis in reversed(range(len(shape))):
+        block[axis] = max(1, min(shape[axis], max(1, max_elements)))
+        max_elements //= max(1, block[axis])
+    for start in product(*(range(0, size, step) for size, step in zip(shape, block))):
+        yield tuple(
+            slice(pos, min(pos + step, size))
+            for pos, step, size in zip(start, block, shape)
+        )
 
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+
+def validate_comparison_options(atol, rtol, memory_budget_mib):
+    """Validate options before a caller opens any input files."""
+    if (
+        not np.isfinite([atol, rtol, memory_budget_mib]).all()
+        or min(atol, rtol) < 0
+        or memory_budget_mib <= 0
+    ):
+        raise ValueError(
+            "Tolerances must be finite and non-negative; memory budget must be positive"
+        )
+
+
+def compare_datasets(
+    left: xr.Dataset, right: xr.Dataset, *, atol=0.0, rtol=0.0, memory_budget_mib=64
+):
+    """Compare every array after exact label alignment, in bounded logical blocks.
+
+    This does not read paths, normalize values, or compare arbitrary attributes
+    and storage encodings. Logical block limits do not bound decoder buffers.
+    """
+    validate_comparison_options(atol, rtol, memory_budget_mib)
+    report = {"equal": False, "complete": False, "differences": [], "variables": {}}
+    if set(left.variables) != set(right.variables):
+        report["differences"].append("Variable/coordinate names differ")
+    if dict(left.sizes) != dict(right.sizes):
+        report["differences"].append("Dimension names or sizes differ")
+    if report["differences"]:
+        return report
+    indexers = {}
+    for dim in right.dims:
+        if (dim in left.indexes) != (dim in right.indexes):
+            report["differences"].append(f"Coordinate labels missing for {dim}")
+        elif dim in right.indexes:
+            a, b = left.indexes[dim], right.indexes[dim]
+            if not a.is_unique or not b.is_unique:
+                report["differences"].append(f"Duplicate coordinate labels for {dim}")
+            else:
+                positions = a.get_indexer(b)
+                if (positions < 0).any():
+                    report["differences"].append(
+                        f"Coordinate label sets differ for {dim}"
+                    )
+                elif not a.equals(b):
+                    indexers[dim] = positions
+    if report["differences"]:
+        return report
+    left = left.isel(indexers)
+    for name in right.variables:
+        a, b = left[name], right[name]
+        if set(a.dims) != set(b.dims):
+            report["differences"].append(f"Variable dimensions differ for {name}")
+            continue
+        a = a.transpose(*b.dims)
+        numeric = a.dtype.kind in "biufc" and b.dtype.kind in "biufc"
+        max_elements = max(
+            1,
+            int(memory_budget_mib * 1024**2)
+            // (3 * max(a.dtype.itemsize, b.dtype.itemsize, 8)),
+        )
+        mismatches, count, max_error = 0, 0, 0.0
+        for slices in _blocks(b.shape, max_elements):
+            selectors = dict(zip(b.dims, slices))
+            x, y = (
+                np.asarray(a.isel(selectors).values),
+                np.asarray(b.isel(selectors).values),
+            )
+            count += x.size
+            if numeric:
+                if atol == rtol == 0:
+                    # NumPy promotes mixed int/float or signed/unsigned
+                    # arrays, which can erase differences above 2**53.
+                    if x.dtype != y.dtype and (
+                        x.dtype.kind in "biu" or y.dtype.kind in "biu"
+                    ):
+                        equal = x.astype(object) == y.astype(object)
+                    else:
+                        equal = x == y
+                    equal = equal | (np.isnan(x) & np.isnan(y))
+                else:
+                    equal = np.isclose(x, y, atol=atol, rtol=rtol, equal_nan=True)
+                finite = np.isfinite(x) & np.isfinite(y)
+                if finite.any():
+                    dtype = (
+                        np.complex128
+                        if x.dtype.kind == "c" or y.dtype.kind == "c"
+                        else np.longdouble
+                    )
+                    max_error = max(
+                        max_error,
+                        float(
+                            np.max(
+                                np.abs(
+                                    x[finite].astype(dtype) - y[finite].astype(dtype)
+                                )
+                            )
+                        ),
+                    )
+            else:
+                equal = x == y
+                if x.dtype.kind in "mM" and y.dtype.kind in "mM":
+                    equal |= np.isnat(x) & np.isnat(y)
+            mismatches += int(np.count_nonzero(~equal))
+        report["variables"][name] = {
+            "equal": mismatches == 0,
+            "values_compared": count,
+            "mismatches": mismatches,
+            "max_absolute_error": max_error if numeric else None,
+        }
+        if mismatches:
+            report["differences"].append(f"Values differ for {name}: {mismatches}")
+    report["complete"] = len(report["variables"]) == len(right.variables)
+    report["equal"] = report["complete"] and not report["differences"]
+    return report
+
+
+def compare_channel_values(
+    actual: np.ndarray,
+    source: np.ndarray,
+    *,
+    value_factor=1.0,
+    value_offset=0.0,
+    atol=0.0,
+    rtol=0.0,
+) -> dict:
+    """Compare one channel without clipping, filling or broadcasting."""
+    if actual.shape != source.shape:
+        return {
+            "passed": False,
+            "reason": "different raw shapes",
+            "actual_shape": actual.shape,
+            "source_shape": source.shape,
+        }
+    expected = source.astype("f4")
+    expected *= value_factor
+    expected += value_offset
+    same_missing = (
+        np.array_equal(np.isnan(actual), np.isnan(expected))
+        and np.array_equal(np.isposinf(actual), np.isposinf(expected))
+        and np.array_equal(np.isneginf(actual), np.isneginf(expected))
     )
+    finite = np.isfinite(actual) & np.isfinite(expected)
+    difference = np.abs(actual[finite].astype("f4") - expected[finite])
+    outside = int((difference > atol + rtol * np.abs(expected[finite])).sum())
+    return {
+        "passed": same_missing and not outside,
+        "missing_pattern_equal": same_missing,
+        "outside_tolerance": outside,
+        "max_absolute_error": float(difference.max()) if difference.size else None,
+        "finite_compared": int(finite.sum()),
+        "atol": atol,
+        "rtol": rtol,
+    }

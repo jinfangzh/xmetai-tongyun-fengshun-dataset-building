@@ -8,10 +8,7 @@ from tests.dataset_building.samples.standard import write_production_evidence as
 
 __all__ = ["SCHEMA_DIRECTORY", "_assert_counts", "_checks", "_receipt"]
 
-SCHEMA_DIRECTORY = (
-    Path(__file__).resolve().parents[3]
-    / "examples" / "dataset_building" / "configs" / "standards"
-)
+SCHEMA_DIRECTORY = Path(__file__).resolve().parents[3] / "config" / "dataset_specs"
 
 
 def _checks(report):
@@ -28,3 +25,14 @@ def _assert_counts(report):
         + c["storage_unknown"]
         == c["logical_blocks_expected"]
     )
+
+
+def validate_fixture(target, spec, **options):
+    """Run a rule-focused quick/full check, retaining each call's JSON report."""
+    from uuid import uuid4
+
+    from pipelines.dataset import validate_zarr
+
+    options.setdefault("mode", "quick")
+    options.setdefault("output", Path(target).parent / f"check-{uuid4().hex}.json")
+    return validate_zarr(target, spec, **options)

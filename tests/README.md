@@ -80,7 +80,7 @@ python -m pytest tests/dataset_building/acceptance -q -rs
 
 - 标准 v3：12 个时次、3×4 网格。第一套为 `t2m/q1000/tp` 三通道，第二套为
   `q1000/t2m` 两通道，时间错开 10 天，各自使用独立的标准和运行配置。测试 quick 的
-  3 块选择与 full 的 12 块扫描、逐套结论、JSON/CSV/Markdown 报告和块台账。
+  3 块选择与 full 的 12 块扫描、逐套结论、单份 JSON 报告和逐块回调。
 - 故障副本：通道错序、NaN、超界值、无效 std、缺块、损坏压缩块。核对具体失败检查项，
   同批的另一套正常资料仍应通过。另验证 quick 未选中的坏块只能由 full 发现。
 - 转换证据：独立构造通道重排、纬度翻转和 2/4/8 倍线性映射的 v3 参考源，
@@ -98,17 +98,17 @@ python -m pytest tests/dataset_building/acceptance -q -rs
 这些测试默认使用按固定规则生成的小型 Zarr/NetCDF，实际执行产物验收、
 转换数值对照、证据绑定和报告输出。
 合成资料测试应正常执行，并检查明确的预期结果。
-数据验收不包含 core/消费者/模型回执检查。回归覆盖旧字段拒绝、JSON/CSV/Markdown
+数据验收不包含 core/消费者/模型回执检查。回归覆盖旧字段拒绝、JSON
 报告栏目和无模型依赖时的生产入口导入；原有 `core-70` 通道子集不属于删除范围。
-组合工作流及其接口已删除。回归验证两套时间范围不相交的数据仍可按各自标准批量验收，
+组合工作流及其接口已删除。回归验证两套时间范围不相交的数据仍可由测试外围循环按各自标准验收，
 不会加入时间交集、共享网格或掩膜相同的跨数据集门槛。
-生产、规则、流程和支撑分别位于 dataset_building 下的 production、checks、workflows、support，
+生产、规则、流程和支撑分别位于 pipelines/dataset 下的 production、checks、workflows、support，
 源码中的 acceptance 层已移除；测试目录仍以 acceptance 表示验收业务。
 规则按格式、数值、存储和转换分组；附件布局和数值分别归入 format、values。
-quick/full 及批量执行位于 workflows，报告位于 support，转换回执业务核验位于 checks/conversion。
-模块边界回归检查新导入路径及旧实现没有重复残留，报告回归覆盖完成结论、输出形状及退出码。
-固定标准模型和严格 YAML 解析位于 `datakit.schema.datasets`，运行绑定留在流程层。
-十份产品验收配置位于 `examples/dataset_building/configs/standards/`，不随基础库打包。
+quick/full 扫描位于 `pipelines/dataset/validate.py`；基础检查位于 `datakit/validation`，任务报告与转换证据分别位于 `pipelines/dataset/reports.py` 和 `evidence.py`。
+模块边界回归检查新导入路径及旧实现没有重复残留，报告回归覆盖完成结论、输出形状及可选保存行为。
+固定标准模型和严格 YAML 解析位于 `datakit.schema`，运行绑定留在流程层。
+十份产品验收配置位于 `config/dataset_specs/`，不随基础库打包。
 边界回归将这些 YAML 的路径显式传给加载器，禁止反向导入示例、流程或生产模块，
 并检查标准子包没有直接依赖数据读取后端或内置产品 YAML。
 

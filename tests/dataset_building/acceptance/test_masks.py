@@ -7,12 +7,11 @@ from dataclasses import replace
 import numpy as np
 import zarr
 
-from datakit.schema.datasets.specifications import (
+from datakit.schema.specifications import (
     AuxiliaryDefinition,
 )
-from pipelines.dataset_building import validate_standard_dataset
 
-from ._helpers import _checks
+from ._helpers import _checks, validate_fixture
 
 
 def test_external_mask_files_cannot_block_embedded_mask_acceptance(published):
@@ -63,7 +62,7 @@ def test_external_mask_files_cannot_block_embedded_mask_acceptance(published):
     # Both invalid external files and a missing external file are out of scope.
     for definition in auxiliaries[:-1]:
         (path / definition.filename).write_bytes(b"invalid external mask file; must not be opened")
-    full = validate_standard_dataset(path, spec, mode="full")
+    full = validate_fixture(path, spec, mode="full")
     assert full.release_passed
     assert _checks(full)["mask.provenance"] == "not-applicable"
     assert all(
@@ -76,7 +75,7 @@ def test_external_mask_files_cannot_block_embedded_mask_acceptance(published):
     # A real defect in the authoritative Zarr mask still fails.
     group = zarr.open_group(str(path), mode="r+")
     group["mask"][0, 0, 0] = 2
-    report = validate_standard_dataset(path, spec, mode="full")
+    report = validate_fixture(path, spec, mode="full")
     assert not report.release_passed
     assert _checks(report)["mask.binary_complement"] == "fail"
 
@@ -85,14 +84,14 @@ def test_embedded_mask_labels_remain_strict_without_external_masks(published):
     path, spec = published
     group = zarr.open_group(str(path), mode="r+")
     group["mask_channel"][:] = ["sea_mask", "land_mask"]
-    report = validate_standard_dataset(path, spec, mode="quick")
+    report = validate_fixture(path, spec, mode="quick")
     assert _checks(report)["mask.labels"] == "fail"
     assert not report.to_dict()["quick_passed"]
 
 
 def test_mask_provenance_can_only_be_required_explicitly(published):
     path, spec = published
-    report = validate_standard_dataset(
+    report = validate_fixture(
         path,
         replace(
             spec,
@@ -124,14 +123,16 @@ def test_mask_validation_and_quality_follow_the_product_schema(published):
     zarr.consolidate_metadata(str(path))
     definition = replace(
         canonical_mask,
-        schema_id="fixture.reversed-mask", channels=("sea_mask", "land_mask"), dtype="bool"
+        schema_id="fixture.reversed-mask",
+        channels=("sea_mask", "land_mask"),
+        dtype="bool",
     )
     spec = replace(
         spec,
         product=replace(spec.product, mask=definition),
         quality=(replace(spec.quality[0], valid_region="land"), *spec.quality[1:]),
     )
-    report = validate_standard_dataset(path, spec, mode="full")
+    report = validate_fixture(path, spec, mode="full")
     assert report.release_passed, report.to_dict()
     assert _checks(report)["layout.mask"] == "pass"
     assert _checks(report)["mask.labels"] == "pass"
@@ -139,6 +140,4 @@ def test_mask_validation_and_quality_follow_the_product_schema(published):
     assert report.identity["mask_schema_id"] == "fixture.reversed-mask"
     # The same data still fails the original canonical declaration.
     canonical = replace(spec, product=replace(spec.product, mask=canonical_mask))
-    assert (
-        _checks(validate_standard_dataset(path, canonical, mode="quick"))["layout.mask"] == "fail"
-    )
+    assert _checks(validate_fixture(path, canonical, mode="quick"))["layout.mask"] == "fail"

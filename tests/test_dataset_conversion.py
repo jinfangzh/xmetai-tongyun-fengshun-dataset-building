@@ -5,7 +5,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from pipelines.dataset import _conversion, extract_zarr_to_netcdf
+from pipelines.dataset import extract_zarr_to_netcdf
+from pipelines.dataset.old import conversion as _conversion
 
 
 @pytest.mark.parametrize("dimension", ["channel", "level"])

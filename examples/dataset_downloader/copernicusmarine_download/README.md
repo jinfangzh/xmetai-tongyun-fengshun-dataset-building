@@ -5,7 +5,7 @@
 
 输入是数据集、变量、空间范围、日期范围和输出根目录；输出是逐日 NetCDF、计划清单及
 状态日志。当前 ORAS5 Profile 每天下载 8 个变量，保存在同一个 NetCDF 中，
-可继续交给 `examples/dataset_building/oras5_nc_to_zarr_88.py` 制作数据集。
+可继续交给 `examples/dataset_building/history/oras5_nc_to_zarr_88.py` 制作数据集。
 本任务独立于 CDS 下载方案，使用自己的服务客户端依赖和认证配置。
 
 ## 配置分层

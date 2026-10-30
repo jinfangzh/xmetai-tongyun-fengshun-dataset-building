@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from numbers import Real
 
 import numpy as np
 import xarray as xr
@@ -32,6 +33,17 @@ class VarSpec:
     source_unit: str = ""
     temporal_kind: TemporalKind = TemporalKind.INSTANTANEOUS
 
+    def __post_init__(self) -> None:
+        if self.source is not None and (not isinstance(self.source, str) or not self.source.strip()):
+            raise ValueError("Variable source must be a nonempty string or None")
+        if any(
+            isinstance(value, (bool, np.bool_)) or not isinstance(value, Real) or not np.isfinite(value)
+            for value in (self.scale, self.offset)
+        ):
+            raise ValueError("Variable scale and offset must be finite numbers")
+        if not isinstance(self.temporal_kind, TemporalKind):
+            raise ValueError("temporal_kind must be a TemporalKind")
+
 
 @dataclass(frozen=True)
 class DatasetMapping:
@@ -48,6 +60,21 @@ class DatasetMapping:
     member_dim: str | None = None
     ensure_member_dim: bool = False
     case_insensitive: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.variables, Mapping) or any(
+            not isinstance(name, str) or not name.strip() or not isinstance(spec, VarSpec)
+            for name, spec in self.variables.items()
+        ):
+            raise ValueError("variables must map nonempty standard names to VarSpec")
+        if bool(self.packed_variable) != bool(self.packed_dimension):
+            raise ValueError("packed_variable and packed_dimension must be specified together")
+        sources = [
+            spec.source.lower() if self.case_insensitive else spec.source
+            for spec in self.variables.values() if spec.source is not None
+        ]
+        if len(set(sources)) != len(sources):
+            raise ValueError("Each source variable must map to exactly one standard name")
 
     def spec_for(self, standard_name: str) -> VarSpec | None:
         return self.variables.get(str(standard_name))
@@ -99,10 +126,6 @@ def load_mapping(value):
             if "temporal_kind" in spec:
                 spec["temporal_kind"] = TemporalKind(spec["temporal_kind"])
             variables[name] = VarSpec(**spec)
-    if bool(fields.get("packed_variable")) != bool(fields.get("packed_dimension")):
-        raise ValueError(
-            "packed_variable and packed_dimension must be specified together"
-        )
     return DatasetMapping(variables=variables, **fields)
 
 
@@ -171,6 +194,8 @@ def apply_dataset_mapping(
             and mapping.spec_for(str(name)).source is None
         ]
         if len(dataset.data_vars) == 1 and unresolved:
+            if len(unresolved) != 1:
+                raise ValueError("A single source variable cannot resolve multiple unnamed mappings")
             dataset = dataset.rename({next(iter(dataset.data_vars)): unresolved[0]})
             available = [unresolved[0]]
     if not available:
@@ -184,7 +209,7 @@ def apply_dataset_mapping(
         value = dataset[name]
         if spec.scale != 1.0 or spec.offset != 0.0:
             value = value * spec.scale + spec.offset
-        attributes = {}
+        attributes = dict(dataset[name].attrs)
         if spec.unit != "unknown":
             attributes["units"] = spec.unit
         if spec.source_unit:

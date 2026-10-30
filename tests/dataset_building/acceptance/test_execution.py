@@ -14,19 +14,18 @@ import pytest
 import yaml
 import zarr
 
-from datakit.schema.datasets import DatasetSchema, load_schema
-from pipelines.dataset_building import validate_standard_dataset
-from pipelines.dataset_building.support.inputs import (
+from datakit.schema import DatasetSchema, load_schema
+from pipelines.dataset import validate_zarr
+from pipelines.dataset.configuration import (
     load_schema_reference,
     load_validation_run,
     load_validation_schema,
     read_frozen_json,
 )
-from pipelines.dataset_building.support.specifications import DatasetValidationSpec
-from pipelines.dataset_building.workflows.conversion import run_conversion_validation
-from pipelines.dataset_building.workflows.dataset import run_dataset_validation
+from pipelines.dataset.configuration import DatasetValidationSpec
+from pipelines.dataset.old.conversion_validation import run_conversion_validation
 
-from ._helpers import _checks, _receipt
+from ._helpers import _checks, _receipt, validate_fixture
 
 
 def _reference(path: Path) -> dict[str, str]:
@@ -46,8 +45,21 @@ def _run_file(tmp_path, schema, spec):
     return path, document
 
 
+def _validate_run(run, output, **options):
+    spec, locations = load_validation_run(run)
+    return validate_zarr(
+        locations["dataset_path"],
+        spec,
+        output=output,
+        auxiliary_directory=locations["auxiliary_directory"],
+        **options,
+    )
+
+
 @pytest.mark.parametrize("mode", ["quick", "full"])
-def test_batch_accepts_independent_datasets_with_disjoint_times(published_schema, tmp_path, mode):
+def test_caller_can_validate_independent_datasets_with_disjoint_times(
+    published_schema, tmp_path, mode
+):
     path, spec, schema, document = published_schema
     first_run, _ = _run_file(tmp_path, schema, spec)
     other_root = tmp_path / "later"
@@ -66,24 +78,29 @@ def test_batch_accepts_independent_datasets_with_disjoint_times(published_schema
     later_spec = _receipt(other, load_validation_schema(later_schema)[0])
     later_run, _ = _run_file(other_root, later_schema, later_spec)
     output = tmp_path / "independent-reports"
-    result = run_dataset_validation(output, run_configs=[first_run, later_run], mode=mode)
-    assert not result.interrupted and len(result.reports) == 2
+    reports = [
+        _validate_run(run, output / f"{index}.json", mode=mode).to_dict()
+        for index, run in enumerate([first_run, later_run])
+    ]
+    assert len(reports) == 2
     assert not np.intersect1d(spec.expected_times(), later_spec.expected_times()).size
-    for report in result.reports:
+    for report in reports:
         assert report["quick_passed"] is (mode == "quick")
         assert report["release_passed"] is (mode == "full")
         assert "cross_dataset_compatibility" not in report
         assert all(check["check_id"] != "combination.scope" for check in report["checks"])
-    saved = [path for path in output.glob("*.json") if path.name != "batch.json"]
+    saved = list(output.glob("*.json"))
     assert len(saved) == 2
-    assert len(list(output.glob("*-blocks.jsonl"))) == 2
+    assert not list(output.glob("*.jsonl"))
 
 
 @pytest.mark.parametrize(
-    "field", ["snapshot_id", "production_evidence", "conversion_evidence"],
+    "field",
+    ["snapshot_id", "production_evidence", "conversion_evidence"],
 )
 def test_runtime_receipts_cannot_be_embedded_in_target_schema(
-    published_schema, field,
+    published_schema,
+    field,
 ):
     _, _, schema, document = published_schema
     document["meta_info"][field] = "runtime-value"
@@ -103,7 +120,9 @@ def test_runtime_receipts_cannot_be_embedded_in_target_schema(
     ],
 )
 def test_missing_standard_fields_are_not_filled_from_python(
-    published_schema, section, field,
+    published_schema,
+    section,
+    field,
 ):
     _, _, schema, document = published_schema
     target = document["meta_info"]
@@ -134,7 +153,7 @@ def test_explicit_yaml_declarations_control_actual_validation(published_schema, 
         attributes["add_offset_location"] = "channel.per_channel[*].add_offset"
     schema.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
     spec, _ = load_schema(schema)
-    assert not validate_standard_dataset(path, spec, mode="quick").to_dict()["quick_passed"]
+    assert not validate_fixture(path, spec, mode="quick").to_dict()["quick_passed"]
 
     group = zarr.open_group(str(path), mode="r+")
     if declaration == "data_dtype":
@@ -142,8 +161,11 @@ def test_explicit_yaml_declarations_control_actual_validation(published_schema, 
         attrs = dict(group["data"].attrs)
         del group["data"]
         group.create_array(
-            "data", data=values, chunks=(1, 3, 3, 4),
-            dimension_names=("time", "channel", "lat", "lon"), attributes=attrs,
+            "data",
+            data=values,
+            chunks=(1, 3, 3, 4),
+            dimension_names=("time", "channel", "lat", "lon"),
+            attributes=attrs,
             config={"write_empty_chunks": True},
         )
     elif declaration == "mask_values":
@@ -155,7 +177,7 @@ def test_explicit_yaml_declarations_control_actual_validation(published_schema, 
         del attrs["channel_info_schema_version"]
         group["data"].attrs.update(meta["metadata"]["data_attributes"])
     zarr.consolidate_metadata(str(path))
-    report = validate_standard_dataset(path, spec, mode="quick")
+    report = validate_fixture(path, spec, mode="quick")
     assert report.to_dict()["quick_passed"], report.to_dict()
 
 
@@ -192,39 +214,41 @@ def test_real_conversion_receipt_attaches_without_changing_yaml(published_schema
     source = tmp_path / "independent-source.zarr"
     shutil.copytree(path, source)
     conversion_config = tmp_path / "conversion.json"
-    conversion_config.write_text(json.dumps({
-        "target_schema": schema.name,
-        "source_path": source.name,
-        "execution": {"snapshot_id": spec.snapshot_id},
-        "conversion": {
-            "source_identity": "independent-source",
-            "source_snapshot_id": "independent-source-frozen",
-            "rules_version": "independent-identity-1",
-            "source_first_time": spec.first_time,
-            "source_last_time": spec.last_time,
-            "source_cadence_hours": 6,
-            "source_channels": list(spec.product.channel_names),
-            "rules": [
-                {"target_channel": name, "source_channel": name, "atol": 0, "rtol": 0}
-                for name in spec.product.channel_names
-            ],
-        },
-    }), encoding="utf-8")
+    conversion_config.write_text(
+        json.dumps(
+            {
+                "target_schema": schema.name,
+                "source_path": source.name,
+                "execution": {"snapshot_id": spec.snapshot_id},
+                "conversion": {
+                    "source_identity": "independent-source",
+                    "source_snapshot_id": "independent-source-frozen",
+                    "rules_version": "independent-identity-1",
+                    "source_first_time": spec.first_time,
+                    "source_last_time": spec.last_time,
+                    "source_cadence_hours": 6,
+                    "source_channels": list(spec.product.channel_names),
+                    "rules": [
+                        {"target_channel": name, "source_channel": name, "atol": 0, "rtol": 0}
+                        for name in spec.product.channel_names
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     receipt_path = tmp_path / "conversion-receipt.json"
     receipt = run_conversion_validation(conversion_config, receipt_path)
     assert receipt["comparison_complete"]
     assert receipt["schema_sha256"] == hashlib.sha256(frozen_yaml).hexdigest()
     run, document = _run_file(tmp_path, schema, spec)
     document["execution"].update(
-        conversion_required=True, conversion_evidence=_reference(receipt_path),
+        conversion_required=True,
+        conversion_evidence=_reference(receipt_path),
     )
     run.write_text(json.dumps(document), encoding="utf-8")
-    result = run_dataset_validation(
-        tmp_path / "reports", run_configs=[run], mode="full",
-    )
-    report = result.reports[0]
+    report = _validate_run(run, tmp_path / "report.json", mode="full").to_dict()
     assert report["release_passed"]
-    assert not result.interrupted
     assert schema.read_bytes() == frozen_yaml
     assert report["identity"]["schema_sha256"] == receipt["schema_sha256"]
     assert report["identity"]["execution_config_sha256"] == _reference(run)["sha256"]
@@ -235,9 +259,10 @@ def test_real_conversion_receipt_attaches_without_changing_yaml(published_schema
     document["execution"]["conversion_evidence"] = _reference(receipt_path)
     run.write_text(json.dumps(document), encoding="utf-8")
     mismatched, _ = load_validation_run(run)
-    assert _checks(validate_standard_dataset(path, mismatched, mode="full"))[
-        "conversion_fidelity.identity"
-    ] == "fail"
+    assert (
+        _checks(validate_fixture(path, mismatched, mode="full"))["conversion_fidelity.identity"]
+        == "fail"
+    )
     assert schema.read_bytes() == frozen_yaml
 
     def change_conversion_config():
@@ -248,7 +273,9 @@ def test_real_conversion_receipt_attaches_without_changing_yaml(published_schema
     changed_output = tmp_path / "changed-conversion-receipt.json"
     with pytest.raises(ValueError, match="Execution configuration changed"):
         run_conversion_validation(
-            conversion_config, changed_output, stop_requested=change_conversion_config,
+            conversion_config,
+            changed_output,
+            stop_requested=change_conversion_config,
         )
     assert not changed_output.exists()
 
@@ -262,7 +289,7 @@ def test_execution_changes_during_scan_cannot_pass(published_schema, tmp_path):
         with run.open("a", encoding="utf-8") as stream:
             stream.write("\n")
 
-    report = validate_standard_dataset(path, loaded, mode="full", on_block=change_run)
+    report = validate_fixture(path, loaded, mode="full", on_block=change_run)
     assert _checks(report)["publication.execution_unchanged"] == "fail"
     assert not report.release_passed
 
@@ -287,7 +314,9 @@ def test_parsed_execution_bytes_must_match_the_frozen_digest(published_schema, t
     ],
 )
 def test_invalid_execution_fields_fail_before_dataset_io(
-    published_schema, tmp_path, execution,
+    published_schema,
+    tmp_path,
+    execution,
 ):
     _, spec, schema, _ = published_schema
     run, document = _run_file(tmp_path, schema, spec)
@@ -298,7 +327,8 @@ def test_invalid_execution_fields_fail_before_dataset_io(
 
 
 def test_execution_cannot_relax_schema_evidence_requirements(
-    published_schema, tmp_path,
+    published_schema,
+    tmp_path,
 ):
     _, spec, schema, document = published_schema
     document["meta_info"]["conversion_required"] = True
@@ -311,7 +341,8 @@ def test_execution_cannot_relax_schema_evidence_requirements(
 
 
 @pytest.mark.parametrize(
-    "location", ["yaml", "execution", "run", "conversion"],
+    "location",
+    ["yaml", "execution", "run", "conversion"],
 )
 @pytest.mark.parametrize(
     ("field", "value"),
@@ -323,7 +354,11 @@ def test_execution_cannot_relax_schema_evidence_requirements(
     ],
 )
 def test_retired_model_fields_are_rejected(
-    published_schema, tmp_path, location, field, value,
+    published_schema,
+    tmp_path,
+    location,
+    field,
+    value,
 ):
     _, spec, schema, document = published_schema
     if location == "yaml":
@@ -341,8 +376,10 @@ def test_retired_model_fields_are_rejected(
             load_validation_run(run)
     else:
         configuration = {
-            "target_schema": schema.name, "source_path": "not-opened.zarr",
-            "conversion": {}, field: value,
+            "target_schema": schema.name,
+            "source_path": "not-opened.zarr",
+            "conversion": {},
+            field: value,
         }
         config = tmp_path / "specialist.json"
         config.write_text(json.dumps(configuration), encoding="utf-8")
@@ -352,7 +389,8 @@ def test_retired_model_fields_are_rejected(
 
 
 def test_run_configuration_only_references_rules_and_resolves_its_own_paths(
-    published_schema, tmp_path,
+    published_schema,
+    tmp_path,
 ):
     path, spec, schema, _ = published_schema
     run, document = _run_file(tmp_path, schema, spec)
@@ -376,7 +414,7 @@ def test_run_configuration_only_references_rules_and_resolves_its_own_paths(
 def test_pure_schema_can_be_used_by_the_workflow_without_attached_evidence(published_schema):
     path, _, schema, _ = published_schema
     pure, _ = load_schema(schema)
-    report = validate_standard_dataset(path, pure)
+    report = validate_fixture(path, pure)
     assert report.quick_passed
     assert not report.release_passed
     assert report.identity["snapshot_id"] is None
@@ -395,8 +433,10 @@ def test_input_loaders_keep_standard_and_execution_models_separate(published_sch
 
 
 @pytest.mark.parametrize("source_name", ["schema", "run", "production"])
-def test_batch_output_cannot_overwrite_configurations_or_evidence(
-    published_schema, tmp_path, source_name,
+def test_report_cannot_overwrite_configurations_or_evidence(
+    published_schema,
+    tmp_path,
+    source_name,
 ):
     _, spec, schema, _ = published_schema
     run, document = _run_file(tmp_path, schema, spec)
@@ -416,5 +456,5 @@ def test_batch_output_cannot_overwrite_configurations_or_evidence(
     source = sources[source_name]
     before = source.read_bytes()
     with pytest.raises(ValueError, match="overwrite input"):
-        run_dataset_validation(source.parent, run_configs=[run])
+        _validate_run(run, source)
     assert source.read_bytes() == before

@@ -11,8 +11,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from datakit.schema.datasets import specifications
-from datakit.schema.datasets.specifications import (
+from datakit.schema import specifications
+from datakit.schema.specifications import (
     ChannelDefinition,
     ChannelMetadataDefinition,
     DatasetProduct,
@@ -20,7 +20,7 @@ from datakit.schema.datasets.specifications import (
     GridDefinition,
     MaskDefinition,
 )
-from pipelines.dataset_building.support.inputs import load_validation_schema
+from pipelines.dataset.configuration import load_validation_schema
 
 from ._helpers import SCHEMA_DIRECTORY
 
@@ -34,10 +34,16 @@ def schemas():
 
 def test_ten_schemas_are_complete_structural_specs(schemas):
     expected_counts = {
-        "cra_c71_p25_h6": 69448, "cra_c87_p25_h24": 16802, "cra_c87_1p5_h24": 17167,
-        "era5_c87_p25_h24": 24472, "era5_c78_p25_h6": 67208, "era5_c116_p25_h6": 2308,
-        "era5_land_c8_1p5_h24": 27394, "oras5_c88_1p5_h24": 11688,
-        "oras5_c88_p25_h24": 11688, "s2s_c76_1p5_h24": 27866,
+        "cra_c71_p25_h6": 69448,
+        "cra_c87_p25_h24": 16802,
+        "cra_c87_1p5_h24": 17167,
+        "era5_c87_p25_h24": 24472,
+        "era5_c78_p25_h6": 67208,
+        "era5_c116_p25_h6": 2308,
+        "era5_land_c8_1p5_h24": 27394,
+        "oras5_c88_1p5_h24": 11688,
+        "oras5_c88_p25_h24": 11688,
+        "s2s_c76_1p5_h24": 27866,
     }
     assert set(schemas) == set(expected_counts)
     assert sum(len(spec.product.channels) for spec, _ in schemas.values()) == 786
@@ -72,19 +78,18 @@ def test_all_product_orders_match_independently_approved_server_baseline(schemas
 
 
 def test_era5_c116_production_definitions_are_preserved(schemas):
-    from pipelines.dataset import _raw_truth
-    from pipelines.dataset_building.production import era5_c116
+    from pipelines.dataset.old import raw_truth as _raw_truth
 
     spec = schemas["era5_c116_p25_h6"][0]
-    assert not hasattr(era5_c116, "PRODUCT")
-    assert era5_c116.CHANNEL_COUNT == 116
-    assert era5_c116.DYNAMIC_CHANNELS is era5_c116.CHANNELS
-    assert era5_c116.CHANNELS == spec.product.channel_names
-    assert _raw_truth._resolve_channels(None) == era5_c116.CHANNELS
-    assert np.array_equal(era5_c116.TARGET_LAT, np.linspace(90, -90, 721, dtype="float32"))
-    assert np.array_equal(era5_c116.TARGET_LON, np.arange(0, 360, 0.25, dtype="float32"))
-    assert era5_c116.SOURCE_VARIABLES["u10m"] == ("u10m", "u10")
-    assert era5_c116.SOURCE_DIRECTORIES["swvl1"] == "vsw1"
+    assert not hasattr(_raw_truth, "PRODUCT")
+    assert len(_raw_truth.CHANNELS) == 116
+    assert _raw_truth.DYNAMIC_CHANNELS is _raw_truth.CHANNELS
+    assert _raw_truth.CHANNELS == spec.product.channel_names
+    assert _raw_truth._resolve_channels(None) == _raw_truth.CHANNELS
+    assert np.array_equal(_raw_truth.TARGET_LAT, np.linspace(90, -90, 721, dtype="float32"))
+    assert np.array_equal(_raw_truth.TARGET_LON, np.arange(0, 360, 0.25, dtype="float32"))
+    assert _raw_truth.SOURCE_VARIABLES["u10m"] == ("u10m", "u10")
+    assert _raw_truth.SOURCE_DIRECTORIES["swvl1"] == "vsw1"
     assert _raw_truth._source_spec("t850") == ("pl", "t", "t", 850)
     assert _raw_truth._source_spec("w10") == ("pl", "w", "w", 10)
     assert _raw_truth._source_spec("swvl1") == ("soil", "vsw1", "swvl1", None)
@@ -95,14 +100,16 @@ def test_yaml_definitions_initialize_in_a_fresh_process():
     code = """
 from pathlib import Path
 import sys
-from pipelines.dataset_building.support.inputs import load_validation_schema
-spec, _ = load_validation_schema(Path('examples/dataset_building/configs/standards/era5_c116_p25_h6.yaml'))
+from pipelines.dataset.configuration import load_validation_schema
+spec, _ = load_validation_schema(Path('config/dataset_specs/era5_c116_p25_h6.yaml'))
 assert len(spec.product.channels) == 116
-assert 'pipelines.dataset_building.production.era5_c116' not in sys.modules
-assert 'pipelines.dataset_building.production.channel_metadata' not in sys.modules
+assert 'pipelines.dataset.old.raw_truth' not in sys.modules
+assert 'pipelines.dataset.old.channel_metadata' not in sys.modules
 """
     result = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True,
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
         cwd=Path(__file__).resolve().parents[3],
     )
     assert result.returncode == 0, result.stderr
@@ -125,7 +132,7 @@ def test_oras5_standards_match_only_observed_server_datasets(schemas):
 
 
 def test_production_metadata_is_not_the_acceptance_source():
-    from pipelines.dataset_building.production.channel_metadata import build_channel_info
+    from pipelines.dataset.old.channel_metadata import build_channel_info
 
     names = ("so19979", "to50", "uo50", "vo50", "stl3", "swvl4", "q2m")
     info = build_channel_info(names, mean=np.zeros(7, dtype="f4"), std=np.ones(7, dtype="f4"))
@@ -149,9 +156,11 @@ def test_each_schema_declares_the_embedded_mask(schemas):
 def test_invalid_mask_schema_fails_before_dataset_io(schemas):
     mask = schemas["era5_land_c8_1p5_h24"][0].product.mask
     for changes in (
-        {"channels": ("land_mask", "land_mask")}, {"dtype": "float32"},
+        {"channels": ("land_mask", "land_mask")},
+        {"dtype": "float32"},
         {"allowed_values": (0, 1), "complement_sum": 2},
-        {"dimensions": ("mask_channel", "lon", "lat")}, {"array_name": "data"},
+        {"dimensions": ("mask_channel", "lon", "lat")},
+        {"array_name": "data"},
         {"require_provenance": "false"},
     ):
         with pytest.raises(ValueError):
@@ -165,15 +174,25 @@ def test_invalid_mask_schema_fails_before_dataset_io(schemas):
         (
             MaskDefinition,
             (
-                "dimensions", "channel_dimensions", "dtype", "channel_dtype",
-                "channels", "allowed_values", "valid_value", "complement_sum",
+                "dimensions",
+                "channel_dimensions",
+                "dtype",
+                "channel_dtype",
+                "channels",
+                "allowed_values",
+                "valid_value",
+                "complement_sum",
             ),
         ),
         (
             ChannelMetadataDefinition,
             (
-                "attribute", "version_attribute", "version", "require_exact_channels",
-                "long_name_required", "scale_offset_formula",
+                "attribute",
+                "version_attribute",
+                "version",
+                "require_exact_channels",
+                "long_name_required",
+                "scale_offset_formula",
             ),
         ),
         (ChannelDefinition, ("variable_type", "preprocessing")),
@@ -181,9 +200,16 @@ def test_invalid_mask_schema_fails_before_dataset_io(schemas):
         (
             DatasetSchema,
             (
-                "template_version", "schema_version", "content_version", "zarr_format",
-                "validation_scope", "schema_status", "arrays", "data_attributes",
-                "channel_metadata", "unregistered_auxiliary_status",
+                "template_version",
+                "schema_version",
+                "content_version",
+                "zarr_format",
+                "validation_scope",
+                "schema_status",
+                "arrays",
+                "data_attributes",
+                "channel_metadata",
+                "unregistered_auxiliary_status",
             ),
         ),
     ],
@@ -197,8 +223,8 @@ def test_models_require_explicit_yaml_declarations(model, required):
 
 @pytest.mark.parametrize("name", ["standard_arrays", "DATA_ATTRIBUTES", "STANDARD_LAND_SEA_MASK"])
 def test_python_default_standard_copies_are_removed(name):
-    from datakit.schema import datasets
+    from datakit import schema
 
     assert not hasattr(specifications, name)
-    assert not hasattr(datasets, name)
-    assert name not in datasets.__all__
+    assert not hasattr(schema, name)
+    assert name not in schema.__all__

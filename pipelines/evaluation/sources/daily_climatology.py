@@ -15,9 +15,9 @@ import xarray as xr
 from datakit import io
 from datakit.evaluation.contracts import DataIndex, DataRequest
 from datakit.evaluation.errors import DecodeError, DiscoveryError
-from datakit.io import get_description, source_config
 from datakit.io.backends.files import NETCDF_READ_LOCK
 from datakit.schema.mapping import (
+    DatasetMapping,
     VarSpec,
     apply_dataset_mapping,
     load_mapping,
@@ -104,9 +104,7 @@ class _DailyClimatologySampler:
         self.mapping = (
             mapping
             if mapping is not None
-            else load_mapping(
-                get_description(source_config("climatology_daily"))["mapping"]
-            )
+            else DatasetMapping(packed_variable="data", packed_dimension="level")
         )
         #: 单次读取的点数预算。取到 200M（f4 约 800MB）是为了让常见的几十步窗口
         #: **一次读完整个纬度范围**——纬度分块每多一块，就多一遍对同一批时间块的
@@ -446,9 +444,7 @@ class DailyClimatologySource:
         selected = (
             load_mapping(mapping)
             if mapping is not None
-            else load_mapping(
-                get_description(source_config("climatology_daily"))["mapping"]
-            )
+            else DatasetMapping(packed_variable="data", packed_dimension="level")
         )
         variables = dict(selected.variables)
         for name in set(scales or {}) | set(units or {}):

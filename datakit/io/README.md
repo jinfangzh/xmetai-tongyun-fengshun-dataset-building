@@ -59,7 +59,8 @@ Zarr 使用 xarray/Zarr 的默认写入行为；压缩可通过 encoding 指定�
 | `config/data_sources/` | 文件组织说明、可选映射及数据集专属入口 |
 
 `io.open(path, layout=...)` 接受布局字典或 YAML 路径。具体源格式由声明和后端决定，
-YAML 的 `format.name` 描述数据格式，IO 层选择对应后端，未知格式会报错；
+YAML 用 `format: grib` 等标量或 `format: {name: grib}` 映射描述格式，
+IO 层统一校验并选择对应后端，未知格式会报错；
 高级调用仍可显式提供 `backend=`。
 数据集专属声明位于
 `config/data_sources/`；评测角色和报告单位约定位于 `pipelines/evaluation/sources/`。

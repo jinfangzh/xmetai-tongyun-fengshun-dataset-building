@@ -23,32 +23,32 @@
 程序始终只读。不得自动改名、以 `level` 代替 `channel`、重排、翻转网格、填零、
 裁剪负权重、修复元数据或用旧附件补齐主 Zarr。下游读取器的兼容行为不改变本版命名标准。
 本流程不执行模型读取、训练或推理，不核验消费者及模型测试回执。
-跨数据集的组合校验不属于本计划；多份标准的批量运行只是分别验收，不增加联合使用门槛。
+跨数据集的组合校验不属于本计划；多份标准由外围循环分别验收，不增加联合使用门槛。
 
 ## 2. 标准组织与职责
 
 | 层次 | 位置 | 内容 |
 |---|---|---|
-| 固定目标模型 | `datakit/schema/datasets/specifications.py` | 标准结构、声明约束和期望值推导，不包含运行快照或回执绑定 |
-| 标准加载 | `datakit/schema/datasets/inputs.py` | 严格 YAML 加载、关联校验、路径及原始字节摘要 |
-| 运行绑定 | `pipelines/dataset_building/support/specifications.py` | 运行快照/回执及转换对照规格，不回写 YAML |
-| 执行输入 | `pipelines/dataset_building/support/inputs.py` | 调用基础标准加载器、装配执行 JSON、执行源摘要及独立证据绑定 |
-| 独立标准 | `examples/dataset_building/configs/standards/*.yaml` | 完整有序通道、可验收语义字段、网格、掩膜、辅助结构和批次信息 |
-| 生产定义与元数据 | `pipelines/dataset_building/production/era5_c116.py`、`channel_metadata.py` | c116 来源映射及生产元数据生成；不从生成器推导验收真值 |
+| 固定目标模型 | `datakit/schema/specifications.py` | 标准结构、声明约束和期望值推导，不包含运行快照或回执绑定 |
+| 标准加载 | `datakit/schema/parser.py` | 严格 YAML 加载、关联校验、路径及原始字节摘要 |
+| 运行绑定 | `pipelines/dataset/configuration.py` | 运行快照/回执及转换对照规格，不回写 YAML |
+| 执行输入 | `pipelines/dataset/configuration.py` | 调用基础标准加载器、装配执行 JSON、执行源摘要及独立证据绑定 |
+| 独立标准 | `config/dataset_specs/*.yaml` | 完整有序通道、可验收语义字段、网格、掩膜、辅助结构和批次信息 |
+| 生产定义与元数据 | `pipelines/dataset/old/raw_truth.py`、`old/channel_metadata.py` | c116 来源映射及生产元数据生成；不从生成器推导验收真值 |
 | 严格 IO | `datakit/validation/zarr_inspection.py` | 原始元数据、指定块、物理块键、编码支持范围 |
-| 条目检查 | `pipelines/dataset_building/checks/` 下的 `format.py`、`values.py`、`storage.py`、`conversion.py` | 主数据/附件格式与数值、物理完整性、转换对照及回执业务规则 |
-| 单套验收与扫描 | `pipelines/dataset_building/workflows/dataset.py` | 单套/批量 quick/full 主块读取、物理遍历、有界进度、中断及资源控制 |
-| 转换对照 | `pipelines/dataset_building/workflows/conversion.py` | 转换保真 quick/full，配置装配调用 inputs，规则调用 checks |
-| 报告 | `pipelines/dataset_building/support/reports.py` | 完成结论汇总、输出保护和报告保存；不核验转换回执业务内容 |
-| 执行入口 | `examples/dataset_building/validate_standard_*.py` | 参数、信号、退出码适配 |
+| 条目检查 | `datakit/validation/structure.py`、`values.py`、`storage.py` 及 pipeline 的 `evidence.py` | 主数据/附件格式与数值、物理完整性、转换对照及回执业务规则 |
+| 单套验收与扫描 | `pipelines/dataset/validate.py` | 单套 quick/full 主块读取、物理遍历、有界进度、中断及资源控制 |
+| 转换对照 | `pipelines/dataset/old/conversion_validation.py` | 转换保真 quick/full，配置装配调用 inputs，规则调用 checks |
+| 报告 | `pipelines/dataset/reports.py` | 完成结论汇总、输出保护和报告保存；不核验转换回执业务内容 |
+| 执行入口 | `pipelines.dataset` 的公共 Python API；`examples/dataset_building/history/validate_standard_conversion.py` | Python 调用与转换对照命令行适配 |
 
 基础库提供固定标准模型、严格 YAML 解析并随包携带 YAML；运行绑定、检查、证据及执行集中在流程层。
-原 acceptance 层移除，production、checks、workflows、support 直接并列。
+旧目录层级已移除，基础检查位于 datakit.validation，pipeline 按操作、证据、配置和报告平铺。
 依赖方向为 workflows → checks → support，验收不导入生产定义，规则不自行打开或遍历文件。
 基础库不反向依赖 pipeline 或模型项目。每份标准自包含，不使用合并草稿、alias/merge 或 Python 产品注册表。
 配置标识、根 ID、产品版本、模板版本、数据版本及 SHA256 分开记录。
 `status: approved` 只表示已纳入规则获准使用，不表示数据已通过 full 或其他用途验收。
-ERA5 c116 的来源映射及通道元数据生成仍用于生产，仅迁至独立 production 子包，不从生成器推导验收真值。
+ERA5 c116 的来源映射及通道元数据生成仍用于生产，集中在 `old/raw_truth.py` 和 `old/channel_metadata.py`，不从生成器推导验收真值。
 
 ## 3. 校验条款
 
@@ -148,12 +148,12 @@ ERA5 c116 的来源映射及通道元数据生成仍用于生产，仅迁至独�
 ### K. 报告和结论
 
 1. **K01** 报告绑定 dataset_id、产品/配置/模板/掩膜/工具版本、data_revision、路径、YAML SHA256、run_id、模式和已检范围；验收报告及转换回执不得跨标准复用。
-2. **K02** 保存 JSON 逐项结果、summary.csv、summary.md、batch.json 和 blocks.jsonl；记录状态、位置、依据、覆盖数、连续完成范围、耗时和内存。
+2. **K02** 指定 output 时保存一个 JSON，记录逐项状态、位置、依据、覆盖数、连续完成范围、耗时和内存；逐块记录由外围通过 on_block 回调保存。
 3. **K03** `pass` 为已执行通过；`fail` 为违反已纳入规则；`warning` 不阻断；`not-applicable` 为范围外；`not-run/blocked` 不能被描述为已通过。
 4. **K04** `quick_passed=true` 要求完成预定抽样、各项适用 quick 检查通过且未中断。不能因尚无 fail 就认定完成；max-blocks 截断 quick 也不通过。
 5. **K05** `scan_complete=true` 要求 full 的值检查、物理覆盖、计数一致、稳定证明全部完成；该字段区分“扫描完成”与“扫描中发现违规”。
 6. **K06** `release_passed=true` 要求 full 完成且全部本版适用规则无 fail/blocked/needs-review/not-run。此结论限于本版范围，不能扩大成所有模型或所有科学用途的证明。
-7. **K07** CLI 退出码：0=本次请求范围通过；1=规则失败；2=未完成/证据不足；3=配置或报告输出错误。quick 退出 0 不表示 full 已运行。
+7. **K07** 调用方读取报告的 quick_passed、release_passed 及具体检查状态；配置或输出错误抛出异常。quick 通过不表示 full 已运行。
 
 ## 4. quick 与 full
 
@@ -437,32 +437,23 @@ v10m, u100m, v100m, msl, tcwv, tp
 python -m pytest tests/dataset_building/acceptance -q
 ```
 
-### 6.2 十套 quick
+### 6.2 单套调用
 
-```bash
-python -m examples.dataset_building.validate_standard_dataset \
-  --schema-directory examples/dataset_building/configs/standards \
-  --mode quick --sample-blocks 3 \
-  --output /workspace/xujn/validation-reports/quick-YYYYMMDD-HHMMSS
+```python
+from pipelines.dataset import validate_zarr
+
+report = validate_zarr(
+    "/data/land.zarr",
+    "config/dataset_specs/era5_land_c8_1p5_h24.yaml",
+    mode="quick",
+)
 ```
 
-### 6.3 单套 full
+默认完整扫描；需要生产完成证明时，在外围通过 load_validation_run 绑定回执后传入 spec。
+批量循环由外围实现。数据集验收使用 Python API。
 
-先冻结 YAML，准备 J06 生产记录及独立 SHA256，在单独运行 JSON 中用 `schema`
-引用该 YAML，在 `execution` 中填写 `production_evidence: {path, sha256}` 和 `snapshot_id`。
-不要向 YAML 回写运行回执；运行 JSON 格式见 [使用说明](../DATASET_VALIDATION.md)。
-正式命令不传 max-blocks；存在规则失败或证据缺失时保留原结果，不补造通过证据。
+### 6.3 输出与读取
 
-```bash
-python -m examples.dataset_building.validate_standard_dataset \
-  --run-config /workspace/xujn/validation-runs/land-full.json \
-  --mode full \
-  --output /workspace/xujn/validation-reports/land-full-YYYYMMDD-HHMMSS
-```
-
-### 6.4 输出与读取
-
-报告目录由 `--output` 设置，必须位于所有输入目录之外。服务器测试数据、报告与运行
-文件均置于 `/workspace/xujn`；生产输入只读。先查看 summary.md 或 summary.csv，
-逐条定位使用单套 JSON，逐块位置使用 blocks.jsonl，批次完成情况使用 batch.json。
-历史报告不会随新规则更新，必须另建输出目录重跑。本计划与实测结果分开保存。
+`output=None` 只返回报告，不写文件。指定 output 为单个 JSON 文件时才保存，已有文件拒绝覆盖。
+报告必须位于输入数据和附件目录之外，且不能覆盖配置或证据。JSON 包含逐项检查、覆盖统计及完成状态。
+历史报告不会随新规则更新，重跑保存需另选文件。本计划与实测结果分开保存。

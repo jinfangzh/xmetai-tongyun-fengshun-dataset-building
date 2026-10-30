@@ -27,7 +27,7 @@ python -m examples.dataset_io.io_example \
 
 省略 `--variables` 时保留源变量、单位和缺测值。提供变量时才显式调用标准化；
 配置没有 mapping 时仅按原始变量名选择。按目录组织的数据需要选择条件或显式传入
-`--all-files`。日序气候态的 `--path` 指向单个 NetCDF。时间条件遵循源时区，
+`--all-files`。日序气候态为单个 NetCDF，直接使用 `io.open(path).read()`，不需要本示例的 YAML 配置。时间条件遵循源时区，
 不隐式转成 UTC。控制台显示结构；`--output` 在关闭源之前写出结果，拒绝覆盖已有输出。
 
 ## Python 调用
@@ -52,4 +52,4 @@ with source.read() as raw:
 通用声明与后端边界见 [配置说明](../../config/README.md)。
 评测的单位口径、GRIB 指标变量筛选、日历对齐、平滑和插值仍由
 `pipelines/evaluation/sources/` 显式组织。产品验收 YAML 位于
-`examples/dataset_building/configs/standards/`，与这里的源数据访问声明用途不同。
+`config/dataset_specs/`，与这里的源数据访问声明用途不同。

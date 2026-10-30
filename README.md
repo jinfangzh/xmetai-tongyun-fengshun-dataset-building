@@ -35,8 +35,7 @@ xmetai-datakit-server/
 │   ├── visualization/          绘图和动画
 │   └── runtime/                日志和运行资源工具
 ├── pipelines/                  可复用的数据处理与评测工作流
-│   ├── dataset/                数据集转换、导出和校验
-│   ├── dataset_building/       独立生产定义、构建产物验收与报告
+│   ├── dataset/                数据集构建、转换、导出、验收和报告
 │   └── evaluation/             数据适配、配对、评测执行和结果输出
 ├── examples/                   具体数据和任务的使用入口
 │   ├── dataset_io/             YAML 驱动的统一读取与导出示例
@@ -102,7 +101,7 @@ Zarr 或 NumPy；需要按数据集规则发现、筛选和组合文件时，通
 | 任务或职责 | 查看位置 |
 | --- | --- |
 | 数据集转换、提取与导出 | `pipelines/dataset/` |
-| 独立生产定义、构建产物验收与报告 | `pipelines/dataset_building/` |
+| 独立生产定义、构建产物验收与报告 | `pipelines/dataset/` |
 | 具体数据集制作与处理任务 | `examples/dataset_building/`、`examples/dataset_processing/` |
 | 评测配置与运行入口 | `examples/evaluation/` |
 | 某个数据集怎么组织、怎么读 | `config/data_sources/` |
@@ -187,19 +186,11 @@ with source.read() as raw:
 
 ### 3. 制作和导出数据集
 
-ERA5 的 NetCDF 制作流程包含预处理和归一化，需要提供匹配的均值、标准差及 mask：
+数据集的创建、时间追加、验收和比较直接使用 `pipelines.dataset` 的 Python API，
+调用方式见 [流程说明](pipelines/dataset/README.md)。
+ERA5/ORAS5 制作流程见 [数据集制作示例](examples/dataset_building/history/README.md)。
 
-```bash
-python -m examples.dataset_building.era5_nc_to_zarr \
-  --source /data/era5/nc \
-  --destination /data/output/era5.zarr \
-  --mean-nc /data/era5/stats/mean.nc \
-  --std-nc /data/era5/stats/std.nc \
-  --mask-nc /data/era5/stats/mask.nc \
-  --accumulation-hours 6
-```
-
-该制作脚本会删除已有目标目录后重新生成数据，运行前应确认 `--destination`。
+历史制作脚本会删除已有目标目录后重新生成数据，运行前应确认 `--destination`。
 
 对已经归一化的 Zarr，可以选择时间和通道，反归一化后导出：
 
@@ -219,19 +210,18 @@ python -m examples.dataset_processing.era5_zarr_to_nc \
 ### 4. 检查数据集
 
 标准数据集通过独立 YAML 描述产品结构、覆盖范围和校验要求，再执行检查。
-十份产品验收标准位于 `examples/dataset_building/configs/standards/`，运行配置、证据绑定和报告由
-`pipelines/dataset_building/` 组织，基础库不依赖该流程包：
+十份产品验收标准位于 `config/dataset_specs/`，运行配置、证据绑定和报告由
+`pipelines/dataset/` 组织，基础库不依赖该流程包：
 
-```bash
-python -m examples.dataset_building.validate_standard_dataset \
-  --schema examples/dataset_building/configs/standards/era5_c116_p25_h6.yaml \
-  --dataset-path /data/era5.zarr \
-  --mode quick \
-  --output outputs/validation/era5
+```python
+from pipelines.dataset import validate_zarr
+
+report = validate_zarr("/data/era5.zarr", "config/dataset_specs/era5_c116_p25_h6.yaml")
+# 需要保存时传 output="outputs/validation/era5.json"。
 ```
 
-YAML 标准必须与实际数据产品对应。`quick` 用于结构和预定抽样检查，完整扫描使用 `full`。
-quick 通过不代表完整扫描或发布验收通过。报告输出目录必须位于输入数据目录之外。
+YAML 标准必须与实际数据产品对应。默认完整扫描，抽样检查可指定 mode="quick"。
+output=None 不保存文件；指定报告文件时，路径须位于输入数据和附件目录之外。
 
 产品标准、十套配置和服务器运行说明见 [标准数据集校验](docs/DATASET_VALIDATION.md)。
 

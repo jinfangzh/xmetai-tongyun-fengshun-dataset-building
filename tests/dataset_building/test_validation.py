@@ -1,20 +1,17 @@
-"""Sample-driven single/batch validation and conversion-evidence workflows."""
+"""Sample-driven single-dataset validation and conversion-evidence workflows."""
 
 from __future__ import annotations
 
-import csv
-import hashlib
 import json
-from pathlib import Path
 
 import numpy as np
 import pytest
 import zarr
 
 from datakit.validation.zarr_inspection import read_zarr_metadata, zarr_chunk_path
-from pipelines.dataset_building.support.reports import report_exit_code
-from pipelines.dataset_building.workflows.conversion import run_conversion_validation
-from pipelines.dataset_building.workflows.dataset import run_dataset_validation
+from pipelines.dataset import validate_zarr
+from pipelines.dataset.configuration import load_validation_run
+from pipelines.dataset.old.conversion_validation import run_conversion_validation
 
 from .samples.standard import (
     evidence_reference,
@@ -24,30 +21,28 @@ from .samples.standard import (
 )
 
 
+def _validate_runs(runs, output, **options):
+    # Batch orchestration belongs to the caller; each API call handles one dataset.
+    reports = []
+    for number, run in enumerate(runs, start=1):
+        spec, locations = load_validation_run(run)
+        report = validate_zarr(
+            locations["dataset_path"],
+            spec,
+            output=output / f"{number}.json",
+            auxiliary_directory=locations["auxiliary_directory"],
+            **options,
+        )
+        reports.append(report.to_dict())
+    return reports
+
+
 def _assert_saved_reports(output, reports):
-    batch = json.loads((output / "batch.json").read_text(encoding="utf-8"))
-    assert batch["requested_schemas"] == batch["completed_schemas"] == len(reports)
-    assert batch["interrupted"] is False
-    with (output / "summary.csv").open(encoding="utf-8-sig", newline="") as stream:
-        rows = list(csv.DictReader(stream))
-    assert len(rows) == len(reports)
-    markdown = (output / "summary.md").read_text(encoding="utf-8")
-    saved_json = set(output.glob("*.json")) - {output / "batch.json"}
-    assert len(saved_json) == len(reports)
-    for number, (report, row) in enumerate(zip(reports, rows, strict=True), start=1):
-        saved = output / f"{number:02d}-{report['run_id']}.json"
+    assert len(list(output.iterdir())) == len(reports)
+    for number, report in enumerate(reports, start=1):
+        saved = output / f"{number}.json"
         assert json.loads(saved.read_text(encoding="utf-8")) == report
-        assert row["dataset_id"] == report["dataset_id"]
-        assert row["release_passed"] == str(report["release_passed"])
-        assert row["quick_passed"] == str(report["quick_passed"])
-        assert row["value_checked"] == str(report["coverage"]["value_checked"])
-        assert report["dataset_id"] in markdown
-        ledger = Path(report["identity"]["block_ledger"])
-        raw = ledger.read_bytes()
-        assert hashlib.sha256(raw).hexdigest() == report["identity"]["block_ledger_sha256"]
-        entries = [json.loads(line) for line in raw.decode("utf-8").splitlines()]
         coverage = report["coverage"]
-        assert len(entries) == coverage["value_checked"] + coverage["read_failed"]
         assert coverage["value_checked"] + coverage["read_failed"] + coverage["not_scanned"] == 12
         assert (
             sum(
@@ -61,6 +56,8 @@ def _assert_saved_reports(output, reports):
             )
             == 12
         )
+    assert not (output / "batch.json").exists()
+    assert not list(output.glob("*.jsonl"))
 
 
 @pytest.mark.parametrize("mode", ["quick", "full"])
@@ -80,11 +77,11 @@ def test_independent_sample_batch_matches_expected_results(validation_samples, t
     assert first.last_time < later.first_time
     output = tmp_path / "reports"
 
-    batch = run_dataset_validation(output, run_configs=runs, mode=mode)
+    reports = _validate_runs(runs, output, mode=mode)
 
-    assert not batch.interrupted and len(batch.reports) == 2
-    assert [report["dataset_id"] for report in batch.reports] == ["fixture", "later"]
-    for report, (path, spec, schema, _) in zip(batch.reports, validation_samples, strict=True):
+    assert len(reports) == 2
+    assert [report["dataset_id"] for report in reports] == ["fixture", "later"]
+    for report, (path, spec, schema, _) in zip(reports, validation_samples, strict=True):
         assert report["quick_passed"] is (mode == "quick")
         assert report["release_passed"] is (mode == "full")
         assert report["coverage"]["scan_complete"] is (mode == "full")
@@ -95,13 +92,7 @@ def test_independent_sample_batch_matches_expected_results(validation_samples, t
         assert report["identity"]["path"] == str(path)
         assert "cross_dataset_compatibility" not in report
         assert all(check["check_id"] != "combination.scope" for check in report["checks"])
-        ledger = Path(report["identity"]["block_ledger"])
-        entries = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
-        assert [entry["index"][0] for entry in entries] == (
-            [0, 5, 11] if mode == "quick" else list(range(12))
-        )
-    _assert_saved_reports(output, batch.reports)
-    assert report_exit_code(batch.reports) == 0
+    _assert_saved_reports(output, reports)
     assert [snapshot_files(sample[0]) for sample in validation_samples] == frozen_data
     assert all(path.read_bytes() == raw for path, raw in frozen_inputs.items())
 
@@ -143,10 +134,10 @@ def test_bad_sample_is_reported_without_blocking_other_datasets(
     before = [snapshot_files(sample[0]) for sample in validation_samples]
     output = tmp_path / "reports"
 
-    batch = run_dataset_validation(output, run_configs=runs, mode="full")
+    reports = _validate_runs(runs, output, mode="full")
 
-    assert not batch.interrupted and len(batch.reports) == 2
-    bad, good = batch.reports
+    assert len(reports) == 2
+    bad, good = reports
     assert bad["dataset_id"] == "fixture" and good["dataset_id"] == "later"
     assert bad["release_passed"] is False
     assert {check["check_id"]: check["status"] for check in bad["checks"]}[check_id] == "fail"
@@ -157,8 +148,7 @@ def test_bad_sample_is_reported_without_blocking_other_datasets(
         assert bad["coverage"]["unapproved_missing"] == 1
     if fault == "corrupt-block":
         assert bad["coverage"]["read_failed"] == 1
-    _assert_saved_reports(output, batch.reports)
-    assert report_exit_code(batch.reports) == 1
+    _assert_saved_reports(output, reports)
     assert [snapshot_files(sample[0]) for sample in validation_samples] == before
 
 
@@ -168,8 +158,8 @@ def test_quick_pass_is_not_full_acceptance_of_an_unselected_bad_frame(published_
     run = write_validation_run(schema, spec)
     before = snapshot_files(path)
 
-    quick = run_dataset_validation(tmp_path / "quick", run_configs=[run], mode="quick").reports[0]
-    full = run_dataset_validation(tmp_path / "full", run_configs=[run], mode="full").reports[0]
+    quick = _validate_runs([run], tmp_path / "quick", mode="quick")[0]
+    full = _validate_runs([run], tmp_path / "full", mode="full")[0]
 
     assert quick["coverage"]["selection"] == [0, 5, 11]
     assert quick["coverage"]["value_checked"] == 3
@@ -218,8 +208,8 @@ def test_mapped_conversion_receipt_controls_later_acceptance(published_schema, t
         conversion_evidence=evidence_reference(receipt_path),
     )
     run.write_text(json.dumps(document), encoding="utf-8")
-    batch = run_dataset_validation(tmp_path / "reports", run_configs=[run], mode="full")
-    report = batch.reports[0]
+    reports = _validate_runs([run], tmp_path / "reports", mode="full")
+    report = reports[0]
     assert report["release_passed"] is (not mismatch)
     assert {check["check_id"]: check["status"] for check in report["checks"]}[
         "conversion_fidelity.full_comparison"
@@ -227,7 +217,6 @@ def test_mapped_conversion_receipt_controls_later_acceptance(published_schema, t
     assert {check["check_id"]: check["status"] for check in report["checks"]}[
         "conversion_fidelity.values"
     ] == ("fail" if mismatch else "pass")
-    assert report_exit_code(batch.reports) == (1 if mismatch else 0)
     assert report["identity"]["schema_sha256"] == receipt["schema_sha256"]
     assert snapshot_files(source) == source_before
     assert snapshot_files(target) == target_before

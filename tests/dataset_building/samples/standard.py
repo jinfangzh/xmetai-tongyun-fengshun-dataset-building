@@ -11,7 +11,7 @@ import numpy as np
 import yaml
 import zarr
 
-from datakit.schema.datasets.specifications import (
+from datakit.schema.specifications import (
     ChannelDefinition,
     DatasetProduct,
     DatasetVariant,
@@ -19,8 +19,8 @@ from datakit.schema.datasets.specifications import (
     GridDefinition,
     QualityRule,
 )
-from pipelines.dataset_building.support.inputs import load_validation_schema
-from pipelines.dataset_building.support.specifications import DatasetValidationSpec
+from pipelines.dataset.configuration import load_validation_schema
+from pipelines.dataset.configuration import DatasetValidationSpec
 
 
 def snapshot_files(path: Path) -> dict[str, bytes]:

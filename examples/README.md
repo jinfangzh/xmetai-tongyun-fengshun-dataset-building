@@ -27,7 +27,7 @@ python -m pip install -e '.[all,test]'       # 数据工作流及测试依赖
 | 目录 | 内容 |
 |---|---|
 | [dataset_io](dataset_io/README.md) | `io_example.py` 展示统一调用；根目录 `config/data_sources/` 保存独立 YAML 声明 |
-| [dataset_building](dataset_building/README.md) | 制作归一化数据集、执行独立 YAML 标准验收 |
+| [dataset_building](dataset_building/README.md) | history 下保留 ERA5/ORAS5 制作和转换对照流程 |
 | [dataset_processing](dataset_processing/README.md) | NetCDF 预处理、单位换算、原始实况提取和 Zarr 切片导出 |
 | [validation](validation/README.md) | 比较两份 NetCDF，或对照 Zarr 与导出 NetCDF 的数值 |
 | [evaluation](evaluation/README.md) | 对预报评分并生成报告 |
@@ -36,7 +36,7 @@ python -m pip install -e '.[all,test]'       # 数据工作流及测试依赖
 可先查看脚本参数：
 
 ```bash
-python -m examples.dataset_building.era5_nc_to_zarr --help
+python -m examples.dataset_building.history.era5_nc_to_zarr --help
 python -m examples.dataset_processing.era5_zarr_to_nc --help
 ```
 
@@ -46,7 +46,7 @@ python -m examples.dataset_processing.era5_zarr_to_nc --help
 [评测与报告](evaluation/README.md)。
 
 `dataset_building` 与 `validation` 的包入口不转导出公共函数；Python 调用直接引用
-`pipelines.dataset`、`pipelines.dataset_building` 或 `datakit.validation`。
+`pipelines.dataset`、`pipelines.dataset` 或 `datakit.validation`。
 
 制作和处理脚本需要实际数据。下载器按照 Batch YAML 中的 `storage.root_path`
 写入文件，运行前应检查数据范围、输出目录和服务凭据。

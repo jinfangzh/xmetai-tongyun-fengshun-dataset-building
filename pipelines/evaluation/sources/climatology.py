@@ -8,7 +8,7 @@ from pathlib import Path
 from datakit import io
 from datakit.evaluation.contracts import DataBundle, DataIndex, DataRequest
 from datakit.evaluation.errors import DecodeError, DiscoveryError
-from datakit.io import get_description, get_layout, source_config
+from datakit.io import get_layout, source_config
 from datakit.io.backends.file_collection import Record as GriddedRecord
 from datakit.io.backends.file_collection import read_records
 from datakit.schema.mapping import DatasetMapping, VarSpec, apply_dataset_mapping
@@ -24,6 +24,7 @@ class ClimatologyCatalog:
     ):
         self.root_dir = Path(root_dir)
         self.template = template
+        self._layout = get_layout(source_config("climatology_cra"))
 
     def file_name(self, moment: datetime) -> str:
         return self.template.format(
@@ -37,9 +38,7 @@ class ClimatologyCatalog:
                 "{hh}", "{cycle_time:%H}"
             )
             for suffix in (".grib2", ".grib", ".nc"):
-                description = get_layout(
-                    get_description(source_config("climatology_cra"))
-                )
+                description = get_layout(self._layout)
                 description["layout"]["filename"] = str(
                     Path(filename).with_suffix(suffix)
                 )

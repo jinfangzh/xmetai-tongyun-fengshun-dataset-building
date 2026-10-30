@@ -9,7 +9,7 @@ from typing import Any
 from datakit import io
 from datakit.evaluation.contracts import DataBundle, DataIndex, DataRequest
 from datakit.evaluation.errors import DecodeError, DiscoveryError
-from datakit.io import get_description, get_layout, source_config
+from datakit.io import get_layout, source_config
 from datakit.io.backends.file_collection import Record as GriddedRecord
 from datakit.io.backends.station_tables import parse_station_file_time
 from datakit.schema.semantics import DataKind, TemporalKind
@@ -22,15 +22,16 @@ class DiamondStationCatalog:
     def __init__(self, station_dir: Path, station_whitelist: list[int] | None = None):
         self.station_dir = Path(station_dir)
         self.station_whitelist = station_whitelist
+        self._layouts = (
+            get_layout(source_config("observation_diamond_flat")),
+            get_layout(source_config("observation_diamond")),
+        )
 
     def file_time(self, path) -> datetime:
         return parse_station_file_time(path)
 
     def discover(self, request: DataRequest) -> DataIndex:
-        for description in (
-            get_description(source_config("observation_diamond_flat")),
-            get_description(source_config("observation_diamond")),
-        ):
+        for description in self._layouts:
             try:
                 records = io.open(self.station_dir, get_layout(description)).discover(
                     all_files=True
@@ -51,6 +52,7 @@ class DiamondStationReader:
         self.source_id = source_id
         self.version = version
         self.station_whitelist = station_whitelist
+        self._layout = get_layout(source_config("observation_diamond"))
 
     def read(self, request: DataRequest, index: DataIndex) -> DataBundle:
         from datakit.io.backends.station_tables import read_records as read_tables
@@ -72,7 +74,7 @@ class DiamondStationReader:
         try:
             dataset = read_tables(
                 records,
-                get_layout(get_description(source_config("observation_diamond"))),
+                self._layout,
                 stations=self.station_whitelist,
                 fixed_station_metadata=True,
             )

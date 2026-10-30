@@ -21,7 +21,7 @@
 配置与设计文档的文件组织如下：
 
 ```text
-examples/dataset_building/configs/standards/
+config/dataset_specs/
 ├── cra_c71_p25_h6.yaml
 ├── cra_c87_p25_h24.yaml
 ├── cra_c87_1p5_h24.yaml
@@ -38,7 +38,7 @@ docs/validation/
 └── SCHEMA_YAML_MERGE_DESIGN.md
 ```
 
-独立文件以 [CRA c71](../../examples/dataset_building/configs/standards/cra_c71_p25_h6.yaml) 为布局示例。
+独立文件以 [CRA c71](../../config/dataset_specs/cra_c71_p25_h6.yaml) 为布局示例。
 十份独立文件是唯一运行时标准。原草稿目录仅保留未采用的 `datasets.yaml`，
 与 [合并设计方案](SCHEMA_YAML_MERGE_DESIGN.md) 一起作为历史设计记录，不参与加载或同步维护。
 
@@ -380,20 +380,20 @@ meta_info.channels
 加载器检查字段合法性、显式产品关联、完整通道及层次展开，并将数组、坐标、属性、
 统计参数、预处理、内嵌 mask 和附件规则交给现有通用检查器。
 重复键、alias/merge、未知字段、未使用变量和不支持的布局/运算会明确报错。
-固定标准模型和严格 YAML 加载位于 `datakit.schema.datasets`；十份具体产品 YAML
-由 `examples/dataset_building/configs/standards/` 维护，不随基础库打包，加载时显式传入路径；
-`datasets/specifications.py` 是处理标准的程序结构，而非另一份产品标准。
+固定标准模型和严格 YAML 加载位于 `datakit.schema`；十份具体产品 YAML
+由 `config/dataset_specs/` 维护，不随基础库打包，加载时显式传入路径；
+`datakit/schema/specifications.py` 是处理标准的程序结构，而非另一份产品标准。
 具体数组、属性、掩膜和通道元数据不再由 Python 默认标准补齐；必填声明缺失时直接报错。
 预期块形状从 YAML 的分块声明解析。扫描器仍仅支持整通道、整空间、单时次分块，
 不支持的数组类型、分块及变换公式仍明确拒绝；删除默认标准不扩大执行能力。
-运行绑定、对象检查、报告和执行位于 `pipelines.dataset_building` 的 checks、workflows 和 support。
-生产定义单独位于 `pipelines.dataset_building.production`，不用于推导验收真值；
-`examples.dataset_building` 只提供 CLI。
-`datasets/specifications.py` 定义固定模型、约束和推导，`datasets/inputs.py` 严格加载 YAML；
-`support/specifications.py` 定义运行和转换对照规格，`support/inputs.py` 装配执行 JSON。
-原 acceptance 目录移除，`checks` 按格式、数值、存储和转换组织规则，
-单套 quick/full 扫描和批量执行在 `workflows/dataset.py`，转换执行在 `workflows/conversion.py`。
-`support/reports.py` 负责结果、完成结论汇总和保存；转换回执核验归入 `checks/conversion.py`。
+对象检查位于 `datakit.validation`；运行绑定、证据、报告和执行位于 `pipelines.dataset`。
+ERA5 提取及来源定义位于 `pipelines.dataset.old.raw_truth`，旧通道属性生成位于 `pipelines.dataset.old.channel_metadata`，不用于推导验收真值；
+数据集验收直接调用 `pipelines.dataset.validate_zarr`。
+`datakit/schema/specifications.py` 定义固定模型、约束和推导，`datakit/schema/parser.py` 严格加载 YAML；
+`configuration.py` 统一定义当前运行规格并装配执行 JSON；旧转换规格位于 `old/conversion_validation.py`。
+旧 checks、workflows、support 层已移除；基础规则位于 `datakit.validation`，
+单套 quick/full 扫描在 `validate.py`，由公共入口 `validate_zarr` 调用，指定 output 时保存单份 JSON；批量由外围实现。转换执行在 `old/conversion_validation.py`。
+`reports.py` 负责结果、完成结论汇总和保存；转换回执核验归入 `evidence.py`。
 
 标准 YAML 不接受 `snapshot_id`、`production_evidence`、`conversion_evidence`。
 运行时绑定放在独立 JSON 的 `execution` 对象中，通过 `schema`

@@ -1,4 +1,1 @@
-"""Dataset production and acceptance CLI examples.
-
-Import reusable operations from pipelines.dataset or pipelines.dataset_building.
-"""
+"""Dataset-building examples; retained product workflows live in history."""

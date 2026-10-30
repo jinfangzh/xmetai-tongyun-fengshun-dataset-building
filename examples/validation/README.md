@@ -2,8 +2,8 @@
 
 本目录比较已有文件的坐标、通道和数值，辅助检查转换或导出的结果。
 按固定 YAML 标准执行 quick/full 验收，请使用
-[dataset_building](../dataset_building/README.md) 中的 `validate_standard_dataset.py`；
-按显式转换规则生成保真报告，使用同目录的 `validate_standard_conversion.py`。
+`pipelines.dataset.validate_zarr`；output=None 时只返回报告。
+按显式转换规则生成保真报告，参见 [dataset_building](../dataset_building/README.md)。
 
 | 入口 | 比较对象 | 输出 |
 | --- | --- | --- |

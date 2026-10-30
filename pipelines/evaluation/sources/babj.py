@@ -26,14 +26,11 @@ def read_babj_analyses(path) -> tuple[str, str, dict[_dt.datetime, dict[str, flo
     列序是 **lon 在前、lat 在后**（第 6、7 列），别按经纬顺序读反。
     """
     try:
-        with open_dataset(path, source_config("observation_babj")).read(
-            all_files=True
-        ) as dataset:
+        description = get_description(source_config("observation_babj"))
+        with open_dataset(path, description).read(all_files=True) as dataset:
             tcname = str(dataset.tcname.values[0])
             tcid = str(dataset.storm.values[0])
-            names = get_description(source_config("observation_babj"))["format"][
-                "columns"
-            ]
+            names = description["format"]["columns"]
             rows = np.column_stack([dataset[name].values for name in names])
     except (OSError, ValueError, IndexError) as exc:
         raise DecodeError(f"解析 babj 报文 {path} 失败: {exc}") from exc

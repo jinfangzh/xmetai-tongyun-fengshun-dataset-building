@@ -1,17 +1,18 @@
 """Public report serialization and completion boundaries."""
 
-import csv
 import json
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from pipelines.dataset_building.support.reports import (
-    ValidationReport, report_exit_code, to_jsonable, write_reports,
+from pipelines.dataset.evidence import attach_conversion_evidence
+from pipelines.dataset.reports import (
+    ValidationReport,
+    to_jsonable,
 )
-from pipelines.dataset_building.checks.conversion import attach_conversion_evidence
-from pipelines.dataset_building.workflows.dataset import validate_standard_dataset
+
+from ._helpers import validate_fixture
 
 
 def test_json_conversion_preserves_nonfinite_diagnostics_without_invalid_json():
@@ -53,14 +54,15 @@ def test_future_receipt_is_optional_for_quick_but_invalid_receipt_is_not(status,
         ("full", "needs-review", True, 2),
     ],
 )
-def test_merged_report_module_preserves_exit_policy(mode, status, complete, expected):
+def test_report_completion_matches_status_and_coverage(mode, status, complete, expected):
     report = ValidationReport("fixture", mode, {})
     report.coverage.update(
         quick_scan_complete=mode == "quick" and complete,
         scan_complete=mode == "full" and complete,
     )
     report.add("fixture.structure", status, "standard_conformance")
-    assert report_exit_code([report.to_dict()]) == expected
+    passed = report.release_passed if mode == "full" else report.quick_passed
+    assert passed is (expected == 0)
 
 
 @pytest.mark.parametrize(
@@ -113,12 +115,12 @@ def test_report_module_validates_conversion_receipts(field, value, check, status
     checks = {item.check_id: item.status for item in report.checks}
     assert checks[f"conversion_fidelity.{check}"] == status
     assert report.release_passed is (exit_code == 0)
-    assert report_exit_code([report.to_dict()]) == exit_code
 
 
-def test_json_csv_and_markdown_report_only_data_acceptance(published, tmp_path):
+def test_json_report_only_contains_data_acceptance(published, tmp_path):
     path, spec = published
-    report = validate_standard_dataset(path, spec, mode="full")
+    output = tmp_path / "report.json"
+    report = validate_fixture(path, spec, mode="full", output=output)
     assert report.release_passed
     document = report.to_dict()
     assert "consumer_compatibility" not in document
@@ -131,16 +133,8 @@ def test_json_csv_and_markdown_report_only_data_acceptance(published, tmp_path):
     assert all(check["category"] != "consumer_compatibility" for check in document["checks"])
     assert document["conversion_fidelity"] == "not-applicable"
     assert document["identity"]["tool_version"] == "datakit-standard-validation/1.8"
-    output = tmp_path / "reports"
-    write_reports(output, [document])
-    saved = json.loads(next(output.glob("*.json")).read_text(encoding="utf-8"))
+    saved = json.loads(output.read_text(encoding="utf-8"))
     assert saved == document
-    with (output / "summary.csv").open(encoding="utf-8-sig", newline="") as stream:
-        rows = list(csv.DictReader(stream))
-    assert len(rows) == 1
-    assert "consumer_compatibility" not in rows[0]
-    assert rows[0]["conversion_fidelity"] == "not-applicable"
-    lines = (output / "summary.md").read_text(encoding="utf-8").splitlines()
-    table = [line for line in lines if line.startswith("|")][:3]
-    assert len(table) == 3
-    assert all(len(line.split("|")) - 2 == 10 for line in table)
+    assert saved["conversion_fidelity"] == "not-applicable"
+    assert not list(tmp_path.glob("*.csv"))
+    assert not list(tmp_path.glob("*.md"))

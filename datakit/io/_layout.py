@@ -79,8 +79,10 @@ def load_layout(value: str | Path | Mapping[str, Any]) -> dict[str, Any]:
     }
     if unknown := result.keys() - allowed:
         raise ValueError(f"Unknown layout fields: {sorted(unknown)}")
+    if isinstance(result.get("format"), str):
+        result["format"] = {"name": result["format"]}
     if "format" in result and not isinstance(result["format"], dict):
-        raise TypeError("format must be a mapping")
+        raise TypeError("format must be a format name or mapping")
     format_name = result.get("format", {}).get("name")
     if format_name is not None and (
         not isinstance(format_name, str)

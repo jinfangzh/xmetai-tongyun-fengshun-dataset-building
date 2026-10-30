@@ -6,22 +6,22 @@
 
 当前校验条款见 [标准数据集校验计划](VALIDATION_PLAN.md)，运行、依赖及报告阅读方法见
 [程序使用说明](../DATASET_VALIDATION.md)。实例配置位于
-[`examples/dataset_building/configs/standards`](../../examples/dataset_building/configs/standards)，每套独立声明产品、模板版本和批次。
+[`config/dataset_specs`](../../config/dataset_specs)，每套独立声明产品、模板版本和批次。
 
 十份 YAML 是运行时标准的唯一维护来源，严格加载后由通用程序执行。
 旧 JSON profiles、inventory 和纯验收 Python 产品模块已删除；c116 来源映射、生产常量及
 通道元数据生成代码保留在流程内。版本、根身份和 YAML SHA256 分别绑定，不能相互替代。
-固定标准模型和严格 YAML 加载位于 `datakit.schema.datasets`；检查、运行配置、扫描和回执 IO 位于
-`pipelines.dataset_building` 的 checks、workflows 和 support，生产来源映射与元数据生成位于独立 production，
-示例只保留 CLI 适配。基础库的原有检查不迁移。生产/转换回执及 `snapshot_id` 由独立 JSON 的
+固定标准模型和严格 YAML 加载位于 `datakit.schema`；检查、运行配置、扫描和回执 IO 位于
+`pipelines.dataset` 的操作、配置、报告和证据模块；来源映射与旧元数据生成位于 `old/raw_truth.py`、`old/channel_metadata.py`，
+数据集验收直接调用 validate_zarr。基础库的原有检查不迁移。生产/转换回执及 `snapshot_id` 由独立 JSON 的
 `execution` 绑定，不写回 YAML；运行 JSON 不是另一套产品标准。
 本流程不再包含 core 探测、消费者或模型测试回执核验；验收结论仅覆盖声明的数据检查。
-跨数据集组合检查已删除；批量选择多套标准仍逐套验收，不产生组合通过结论。
-`datakit/schema/datasets/specifications.py` 定义固定结构、约束和推导，`datasets/inputs.py` 严格加载 YAML。
-`support/specifications.py` 定义运行及转换对照规格，`support/inputs.py` 调用基础加载器并装配执行输入。
-原 acceptance 目录移除，production、checks、workflows、support 直接并列。
+跨数据集组合检查已删除；每次调用 validate_zarr 只验收一套，批量循环由外围实现。
+`datakit/schema/specifications.py` 定义固定结构、约束和推导，`datakit/schema/parser.py` 严格加载 YAML。
+`configuration.py` 定义运行规格、调用基础加载器并装配执行输入；旧转换规格位于 `old/conversion_validation.py`。
+旧目录层级已移除，基础检查位于 datakit.validation，pipeline 按操作、证据、配置和报告平铺。
 checks 按格式、数值、存储和转换组织规则，转换回执也由转换规则核验。
-quick/full 扫描、资源控制及批量执行进入 workflows；support/reports 只负责报告与结论汇总。
+quick/full 扫描及资源控制位于 `validate.py`；`reports.py` 提供任务报告与结论汇总，validate_zarr 按需保存单份 JSON。
 
 | 文件 | 用途 |
 |---|---|

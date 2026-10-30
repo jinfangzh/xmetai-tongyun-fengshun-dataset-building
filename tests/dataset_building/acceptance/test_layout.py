@@ -9,9 +9,7 @@ import numpy as np
 import pytest
 import zarr
 
-from pipelines.dataset_building import validate_standard_dataset
-
-from ._helpers import _assert_counts, _checks
+from ._helpers import _assert_counts, _checks, validate_fixture
 
 
 @pytest.mark.parametrize(
@@ -56,7 +54,7 @@ def test_strict_contract_rejects_compatibility_shortcuts(published, fault):
             info["q1000"]["units"] = "unknown"
         group["channel"].attrs.update(attrs)
     zarr.consolidate_metadata(str(path))
-    full = validate_standard_dataset(path, spec, mode="full")
+    full = validate_fixture(path, spec, mode="full")
     assert not full.release_passed
     assert any(c.status == "fail" for c in full.checks)
     _assert_counts(full)
@@ -71,7 +69,7 @@ def test_south_to_north_grid_is_explicit_and_range_remains_min_max(published):
     group = zarr.open_group(str(path), mode="r+")
     group["lat"][:] = ascending.coordinates()[0]
     zarr.consolidate_metadata(str(path))
-    full = validate_standard_dataset(path, spec, mode="full")
+    full = validate_fixture(path, spec, mode="full")
     assert full.release_passed
     assert _checks(full)["attributes.root.geospatial_lat_range"] == "pass"
     wrong = replace(
@@ -84,8 +82,7 @@ def test_south_to_north_grid_is_explicit_and_range_remains_min_max(published):
         ),
     )
     assert (
-        _checks(validate_standard_dataset(path, wrong, mode="quick"))["coordinates.lat.complete"]
-        == "fail"
+        _checks(validate_fixture(path, wrong, mode="quick"))["coordinates.lat.complete"] == "fail"
     )
     with pytest.raises(ValueError):
         replace(ascending, latitude_direction="unspecified")

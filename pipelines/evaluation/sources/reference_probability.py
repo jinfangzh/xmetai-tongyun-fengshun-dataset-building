@@ -44,8 +44,7 @@ class RefProbabilitySource:
             try:
                 with open_dataset(
                     self._index[key],
-                    source_config("climatology_station_probability"),
-                    layout=self._layout,
+                    self._layout,
                 ).read(all_files=True) as dataset:
                     values = (
                         dataset.probability.isel(cycle_time=0)

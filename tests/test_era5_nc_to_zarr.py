@@ -9,7 +9,7 @@ import pytest
 import xarray as xr
 
 spec = importlib.util.spec_from_file_location(
-    "era5_nc_to_zarr", Path(__file__).parents[1] / "examples/dataset_building/era5_nc_to_zarr.py"
+    "era5_nc_to_zarr", Path(__file__).parents[1] / "examples/dataset_building/history/era5_nc_to_zarr.py"
 )
 assert spec is not None and spec.loader is not None
 era5_nc_to_zarr = importlib.util.module_from_spec(spec)

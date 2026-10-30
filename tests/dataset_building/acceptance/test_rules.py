@@ -6,24 +6,18 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from datakit.schema.datasets.specifications import AuxiliaryDefinition, EvidenceReference
-from pipelines.dataset_building import validate_standard_dataset
-from pipelines.dataset_building.checks.conversion import (
+from datakit.schema.specifications import AuxiliaryDefinition, EvidenceReference
+from pipelines.dataset.old.conversion_validation import (
     check_statistics as check_conversion_statistics,
 )
-from pipelines.dataset_building.checks.conversion import (
-    compare_channel_values,
-)
-from pipelines.dataset_building.checks.format import check_auxiliary_format, check_dataset_format
-from pipelines.dataset_building.checks.storage import block_storage_status, valid_chunk_key
-from pipelines.dataset_building.checks.values import check_statistics
-from pipelines.dataset_building.support.reports import ValidationReport
-from pipelines.dataset_building.support.specifications import (
-    ConversionChannelRule,
-    ConversionValidationSpec,
-)
+from datakit.validation.comparison import compare_channel_values
+from datakit.validation.structure import check_auxiliary_format, check_dataset_format
+from datakit.validation.storage import block_storage_status, valid_chunk_key
+from datakit.validation.values import check_statistics
+from pipelines.dataset.reports import ValidationReport
+from pipelines.dataset.old.conversion_validation import ConversionChannelRule, ConversionValidationSpec
 
-from ._helpers import _checks
+from ._helpers import _checks, validate_fixture
 
 
 def test_format_check_does_not_certify_statistics_values(published):
@@ -31,16 +25,25 @@ def test_format_check_does_not_certify_statistics_values(published):
     with xr.open_zarr(str(path), consolidated=False, chunks=None, mask_and_scale=False) as obj:
         obj["std"] = xr.DataArray(np.zeros(3, dtype="f4"), dims=("channel",))
         report = ValidationReport(spec.dataset_id, "quick", {})
-        assert check_dataset_format(obj, spec, report) is True
+        valid, checks = check_dataset_format(obj, spec)
+        report.checks.extend(checks)
+        assert valid is True
         assert "statistics.finite_positive" not in _checks(report)
-        assert not check_statistics(obj["mean"].values, obj["std"].values, report)
+        valid, checks = check_statistics(obj["mean"].values, obj["std"].values)
+        report.checks.extend(checks)
+        assert not valid
         assert _checks(report)["statistics.finite_positive"] == "fail"
 
 
 def test_invalid_auxiliary_header_does_not_read_values(published, monkeypatch):
     _, spec = published
     definition = AuxiliaryDefinition(
-        "weight.nc", "netcdf", "weight", ("lat", "lon"), "float32", "weight",
+        "weight.nc",
+        "netcdf",
+        "weight",
+        ("lat", "lon"),
+        "float32",
+        "weight",
         check_variable_name=True,
     )
     obj = xr.Dataset({"weight": (("lat", "lon"), np.zeros((2, 2), dtype="f4"))})
@@ -50,7 +53,9 @@ def test_invalid_auxiliary_header_does_not_read_values(published, monkeypatch):
         raise AssertionError("Invalid header must be rejected before materialization")
 
     monkeypatch.setattr(xr.DataArray, "values", property(unexpected_values))
-    assert check_auxiliary_format(obj, definition, spec, report) is None
+    values, checks = check_auxiliary_format(obj, definition, spec)
+    report.checks.extend(checks)
+    assert values is None
     assert _checks(report)["auxiliary.weight.nc.header_layout"] == "fail"
     assert _checks(report)["auxiliary.weight.nc.values"] == "blocked"
 
@@ -86,9 +91,21 @@ def test_conversion_tolerance_is_unchanged_and_inputs_are_not_mutated(offset, pa
     actual = np.array([1.0 + offset, 3.0, np.nan, np.inf, -np.inf], dtype="f4")
     source_before, actual_before = source.copy(), actual.copy()
     rule = ConversionChannelRule(
-        "target", "source", atol=0.1, rtol=0.0, value_factor=2.0, value_offset=1.0,
+        "target",
+        "source",
+        atol=0.1,
+        rtol=0.0,
+        value_factor=2.0,
+        value_offset=1.0,
     )
-    result = compare_channel_values(actual, source, rule)
+    result = compare_channel_values(
+        actual,
+        source,
+        value_factor=rule.value_factor,
+        value_offset=rule.value_offset,
+        atol=rule.atol,
+        rtol=rule.rtol,
+    )
     assert result["passed"] is passed
     assert result["missing_pattern_equal"]
     assert result["outside_tolerance"] == (0 if passed else 1)
@@ -98,8 +115,10 @@ def test_conversion_tolerance_is_unchanged_and_inputs_are_not_mutated(offset, pa
 
 def test_root_checks_are_retained_when_auxiliary_directory_is_missing(published, tmp_path):
     path, spec = published
-    report = validate_standard_dataset(
-        path, replace(spec, directory_name=""), mode="quick",
+    report = validate_fixture(
+        path,
+        replace(spec, directory_name=""),
+        mode="quick",
         auxiliary_directory=tmp_path / "missing",
     )
     checks = _checks(report)
@@ -109,19 +128,29 @@ def test_root_checks_are_retained_when_auxiliary_directory_is_missing(published,
 
 
 @pytest.mark.parametrize(
-    "case", ["valid", "identity", "provenance", "channels", "zero_std", "nonfinite", "shape"],
+    "case",
+    ["valid", "identity", "provenance", "channels", "zero_std", "nonfinite", "shape"],
 )
 def test_conversion_statistics_receipt_rules_do_not_read_files(tmp_path, case):
     reference = EvidenceReference(tmp_path / "not-read.json", "0" * 64)
     conversion = ConversionValidationSpec(
-        "source", "snapshot", "v1", "2024-01-01T00", "2024-01-01T00", 6,
-        ("a",), (ConversionChannelRule("a", "a", 0, 0),),
+        "source",
+        "snapshot",
+        "v1",
+        "2024-01-01T00",
+        "2024-01-01T00",
+        6,
+        ("a",),
+        (ConversionChannelRule("a", "a", 0, 0),),
         source_statistics=reference,
     )
     statistics = {
-        "source_identity": "source", "source_snapshot_id": "snapshot",
-        "channels": ["a"], "provenance": "independent reference",
-        "mean": [2.0], "std": [3.0],
+        "source_identity": "source",
+        "source_snapshot_id": "snapshot",
+        "channels": ["a"],
+        "provenance": "independent reference",
+        "mean": [2.0],
+        "std": [3.0],
     }
     if case == "identity":
         statistics["source_identity"] = "wrong"
@@ -141,6 +170,10 @@ def test_conversion_statistics_receipt_rules_do_not_read_files(tmp_path, case):
             check_conversion_statistics(xr.Dataset(), target, conversion, [0], statistics)
     else:
         assert check_conversion_statistics(
-            xr.Dataset(), target, conversion, [0], statistics,
+            xr.Dataset(),
+            target,
+            conversion,
+            [0],
+            statistics,
         ) is (case == "valid")
     assert not reference.path.exists()

@@ -11,17 +11,15 @@ from dataclasses import replace
 import pytest
 import zarr
 
-from datakit.schema.datasets.specifications import EvidenceReference
-from pipelines.dataset_building import validate_standard_dataset
-from pipelines.dataset_building.support.specifications import (
-    ConversionChannelRule,
-    ConversionValidationSpec,
-)
+from datakit.schema.specifications import EvidenceReference
+from pipelines.dataset.old.conversion_validation import ConversionChannelRule, ConversionValidationSpec
+
+from ._helpers import validate_fixture
 
 
 @pytest.mark.parametrize("fixture_name", ["published", "published_schema"])
 def test_conversion_full_mapping_and_attached_receipt(request, fixture_name):
-    from pipelines.dataset_building import validate_standard_conversion
+    from pipelines.dataset import validate_standard_conversion
 
     path, spec = request.getfixturevalue(fixture_name)[:2]
     source = path.parent / "source.zarr"
@@ -52,7 +50,7 @@ def test_conversion_full_mapping_and_attached_receipt(request, fixture_name):
         conversion_required=True,
         conversion_evidence=EvidenceReference(file, hashlib.sha256(file.read_bytes()).hexdigest()),
     )
-    assert validate_standard_dataset(path, confirmed, mode="full").release_passed
+    assert validate_fixture(path, confirmed, mode="full").release_passed
     for field in ("config_id", "template_version", "schema_sha256"):
         stale = deepcopy(receipt)
         stale[field] = "different-standard"
@@ -60,10 +58,11 @@ def test_conversion_full_mapping_and_attached_receipt(request, fixture_name):
         mismatched = replace(
             confirmed,
             conversion_evidence=EvidenceReference(
-                file, hashlib.sha256(file.read_bytes()).hexdigest(),
+                file,
+                hashlib.sha256(file.read_bytes()).hexdigest(),
             ),
         )
-        report = validate_standard_dataset(path, mismatched, mode="full")
+        report = validate_fixture(path, mismatched, mode="full")
         assert not report.release_passed
         assert any(
             item.check_id == "conversion_fidelity.identity" and item.status == "fail"
@@ -78,16 +77,22 @@ def test_conversion_full_mapping_and_attached_receipt(request, fixture_name):
 
 @pytest.mark.parametrize("during_scan", [False, True])
 def test_comparison_rejects_a_yaml_changed_after_loading(published_schema, during_scan):
-    from pipelines.dataset_building import validate_standard_conversion
+    from pipelines.dataset import validate_standard_conversion
 
     path, spec, schema, _ = published_schema
     other = path.parent / "other.zarr"
     shutil.copytree(path, other)
     conversion = ConversionValidationSpec(
-        "fixture", "snapshot", "rules-1", spec.first_time, spec.last_time, 6,
+        "fixture",
+        "snapshot",
+        "rules-1",
+        spec.first_time,
+        spec.last_time,
+        6,
         spec.product.channel_names,
         tuple(ConversionChannelRule(n, n, 0, 0) for n in spec.product.channel_names),
     )
+
     def change_schema(_block=None):
         with schema.open("a", encoding="utf-8") as stream:
             stream.write("\n# changed after loading\n")
@@ -96,5 +101,9 @@ def test_comparison_rejects_a_yaml_changed_after_loading(published_schema, durin
         change_schema()
     with pytest.raises(ValueError, match="changed"):
         validate_standard_conversion(
-            other, path, spec, conversion, on_block=change_schema if during_scan else None,
+            other,
+            path,
+            spec,
+            conversion,
+            on_block=change_schema if during_scan else None,
         )

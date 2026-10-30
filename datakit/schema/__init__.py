@@ -1,28 +1,31 @@
-"""Canonical weather-data dimensions and variable metadata."""
+"""Schema models, strict YAML loading, dimensions and variable metadata."""
 
 from .mapping import DatasetMapping, VarSpec, load_mapping
 from .dimensions import (
     DIMENSION_ALIASES,
-    LEVELS_6,
     LEVELS_13,
-    LEVELS_20,
-    LEVELS_30,
-    LEVELS_37,
 )
 from .variables import (
     ACCUMULATED_VARIABLES,
-    LAND_VARIABLES,
-    OCEAN_VARIABLES,
-    PRESSURE_VARIABLES,
     SHORT_NAME_MAPPING,
-    STATIONS_NORM,
     UNIT_SCALE,
     WATER_VARIABLES,
-    is_accumulated,
-    is_land,
-    is_ocean,
-    is_pressure,
-    is_water,
+)
+
+from .parser import load_schema, resolve_config_path, verify_schema_unchanged
+from .specifications import (
+    ArrayDefinition,
+    AuxiliaryDefinition,
+    ChannelDefinition,
+    ChannelMetadataDefinition,
+    DatasetProduct,
+    DatasetSchema,
+    DatasetVariant,
+    EvidenceReference,
+    GridDefinition,
+    MaskDefinition,
+    QualityRule,
+    build_standard_channel_info,
 )
 
 __all__ = [
@@ -31,21 +34,23 @@ __all__ = [
     "load_mapping",
     "ACCUMULATED_VARIABLES",
     "DIMENSION_ALIASES",
-    "LAND_VARIABLES",
-    "LEVELS_6",
     "LEVELS_13",
-    "LEVELS_20",
-    "LEVELS_30",
-    "LEVELS_37",
-    "OCEAN_VARIABLES",
-    "PRESSURE_VARIABLES",
     "SHORT_NAME_MAPPING",
-    "STATIONS_NORM",
     "UNIT_SCALE",
     "WATER_VARIABLES",
-    "is_accumulated",
-    "is_land",
-    "is_ocean",
-    "is_pressure",
-    "is_water",
+    "ArrayDefinition",
+    "AuxiliaryDefinition",
+    "ChannelDefinition",
+    "ChannelMetadataDefinition",
+    "DatasetProduct",
+    "DatasetSchema",
+    "DatasetVariant",
+    "EvidenceReference",
+    "GridDefinition",
+    "MaskDefinition",
+    "QualityRule",
+    "build_standard_channel_info",
+    "load_schema",
+    "resolve_config_path",
+    "verify_schema_unchanged",
 ]
