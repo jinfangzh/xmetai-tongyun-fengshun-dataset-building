@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[3]
 
 EXPECTED_PIPELINE_FILES = {
     "__init__.py",
+    "build.py",
+    "preparation.py",
     "validate.py",
     "_sources.py",
     "evidence.py",
@@ -212,7 +214,7 @@ class RejectModelImports(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, RejectModelImports())
 from pipelines import dataset
 assert not hasattr(dataset, 'check_core_consumer')
-assert len(dataset.__all__) == 11
+assert len(dataset.__all__) == 13
 for name in ('validate_standard_conversion',):
     assert callable(getattr(dataset, name))
     assert getattr(dataset, name).__module__ == 'pipelines.dataset.old.conversion_validation'
@@ -252,6 +254,7 @@ assert importlib.util.find_spec('pipelines.dataset.combination') is None
 assert not any(name.endswith('.combination') for name in sys.modules)
 assert set(dataset.__all__) == {
     'validate_standard_conversion', 'run_conversion_validation',
+    'build_zarr', 'BuildReport',
     'create_zarr', 'append_zarr', 'validate_zarr', 'compare_zarr',
     'convert_to_zarr', 'extract_zarr_to_netcdf', 'extract_raw_truth_day',
     'split_netcdf_by_time_and_channel', 'validate_zarr_netcdf_consistency',

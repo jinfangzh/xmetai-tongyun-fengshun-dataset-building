@@ -1,6 +1,7 @@
 """Public report serialization and completion boundaries."""
 
 import json
+import yaml
 from pathlib import Path
 
 import numpy as np
@@ -117,9 +118,9 @@ def test_report_module_validates_conversion_receipts(field, value, check, status
     assert report.release_passed is (exit_code == 0)
 
 
-def test_json_report_only_contains_data_acceptance(published, tmp_path):
+def test_yaml_report_only_contains_data_acceptance(published, tmp_path):
     path, spec = published
-    output = tmp_path / "report.json"
+    output = tmp_path / "report.yaml"
     report = validate_fixture(path, spec, mode="full", output=output)
     assert report.release_passed
     document = report.to_dict()
@@ -133,7 +134,7 @@ def test_json_report_only_contains_data_acceptance(published, tmp_path):
     assert all(check["category"] != "consumer_compatibility" for check in document["checks"])
     assert document["conversion_fidelity"] == "not-applicable"
     assert document["identity"]["tool_version"] == "datakit-standard-validation/1.8"
-    saved = json.loads(output.read_text(encoding="utf-8"))
+    saved = yaml.safe_load(output.read_text(encoding="utf-8"))
     assert saved == document
     assert saved["conversion_fidelity"] == "not-applicable"
     assert not list(tmp_path.glob("*.csv"))

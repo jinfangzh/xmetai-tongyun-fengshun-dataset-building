@@ -28,11 +28,11 @@ def _assert_counts(report):
 
 
 def validate_fixture(target, spec, **options):
-    """Run a rule-focused quick/full check, retaining each call's JSON report."""
+    """Run a rule-focused quick/full check, retaining each call's YAML report."""
     from uuid import uuid4
 
     from pipelines.dataset import validate_zarr
 
     options.setdefault("mode", "quick")
-    options.setdefault("output", Path(target).parent / f"check-{uuid4().hex}.json")
+    options.setdefault("output", Path(target).parent / f"check-{uuid4().hex}.yaml")
     return validate_zarr(target, spec, **options)

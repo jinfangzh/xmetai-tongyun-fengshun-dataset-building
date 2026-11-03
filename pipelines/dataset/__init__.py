@@ -3,6 +3,8 @@
 from importlib import import_module
 
 __all__ = [
+    "build_zarr",
+    "BuildReport",
     "create_zarr",
     "append_zarr",
     "validate_zarr",
@@ -17,6 +19,8 @@ __all__ = [
 ]
 
 _MODULES = {
+    "build_zarr": ".build",
+    "BuildReport": ".reports",
     "create_zarr": ".create",
     "append_zarr": ".append",
     "validate_zarr": ".validate",

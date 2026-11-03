@@ -79,7 +79,7 @@ def test_caller_can_validate_independent_datasets_with_disjoint_times(
     later_run, _ = _run_file(other_root, later_schema, later_spec)
     output = tmp_path / "independent-reports"
     reports = [
-        _validate_run(run, output / f"{index}.json", mode=mode).to_dict()
+        _validate_run(run, output / f"{index}.yaml", mode=mode).to_dict()
         for index, run in enumerate([first_run, later_run])
     ]
     assert len(reports) == 2
@@ -89,7 +89,7 @@ def test_caller_can_validate_independent_datasets_with_disjoint_times(
         assert report["release_passed"] is (mode == "full")
         assert "cross_dataset_compatibility" not in report
         assert all(check["check_id"] != "combination.scope" for check in report["checks"])
-    saved = list(output.glob("*.json"))
+    saved = list(output.glob("*.yaml"))
     assert len(saved) == 2
     assert not list(output.glob("*.jsonl"))
 
@@ -247,7 +247,7 @@ def test_real_conversion_receipt_attaches_without_changing_yaml(published_schema
         conversion_evidence=_reference(receipt_path),
     )
     run.write_text(json.dumps(document), encoding="utf-8")
-    report = _validate_run(run, tmp_path / "report.json", mode="full").to_dict()
+    report = _validate_run(run, tmp_path / "report.yaml", mode="full").to_dict()
     assert report["release_passed"]
     assert schema.read_bytes() == frozen_yaml
     assert report["identity"]["schema_sha256"] == receipt["schema_sha256"]
@@ -455,6 +455,11 @@ def test_report_cannot_overwrite_configurations_or_evidence(
     sources = {"schema": schema, "run": run, "production": production}
     source = sources[source_name]
     before = source.read_bytes()
+    output = source
+    if source.suffix != ".yaml":
+        # A valid report suffix must still not bypass input protection via a symlink.
+        output = tmp_path / f"{source_name}-report.yaml"
+        output.symlink_to(source)
     with pytest.raises(ValueError, match="overwrite input"):
-        _validate_run(run, source)
+        _validate_run(run, output)
     assert source.read_bytes() == before

@@ -1,81 +1,129 @@
-# 数据集操作与验收
+# 数据集任务接口
 
-公共入口保持从 `pipelines.dataset` 导入。基础检查集中在
-[`datakit.validation`](../../datakit/validation/README.md)，本目录组织读取、创建、
-扫描、证据检查和任务报告，不维护另一套数组检查实现。
+通过 Python API 组织构建、追加、验收和比较任务：
 
 ```python
-from pipelines.dataset import create_zarr, append_zarr, validate_zarr, compare_zarr
+from pipelines.dataset import build_zarr, create_zarr, append_zarr, validate_zarr, compare_zarr
 ```
 
-| 函数 | 职责与返回值 |
+| 接口 | 职责 | 返回值 |
+| --- | --- | --- |
+| `build_zarr` | 调用自定义加工、组装标准元数据、检查并写出、回读校验 | `BuildReport` |
+| `create_zarr` | 检查已准备好的 Dataset，通过后写出 | `ValidationReport` |
+| `append_zarr` | 将已有 B 与后续 A 合并到独立 C，完整校验 C | `ValidationReport` |
+| `validate_zarr` | 按契约验收已有产物 | `ValidationReport` |
+| `compare_zarr` | 对齐完整标签集合后比较数值 | 差异字典 |
+
+运行与自定义加工示例见 [dataset_building](../../examples/dataset_building/README.md)。
+
+## 模块职责与契约边界
+
+```text
+examples：具体任务参数与专属加工
+    ↓
+pipelines.dataset：编排、资源管理、组装、写出与任务报告
+    ↓
+datakit：IO、契约模型、基础变换与检查
+```
+
+`datakit` 不依赖 `pipelines` 或 `examples`；pipeline 不导入具体示例，也不按数据集名称选择算法。
+
+| 对象 | 负责内容 |
 | --- | --- |
-| `create_zarr(dataset, destination, spec, ...)` | 检查准备好的 Xarray Dataset，通过后写出，返回 ValidationReport |
-| `append_zarr(source, target, ...)` | 固定沿时间追加完整帧，返回目标 Path |
-| `validate_zarr(target, spec, output=None, ...)` | 验收已有产物，返回 ValidationReport |
-| `compare_zarr(source, target, ...)` | 对齐完整标签集合后比较数值，返回差异字典 |
+| 源契约 | 文件格式、布局与已声明的变量映射 |
+| 目标契约 | 通道、网格、时间覆盖、类型、统计量关系、预处理语义及元数据要求 |
+| 专属 `process` | 变量组织、派生量、单位换算、重采样、缺测处理、归一化、附件准备和类型转换 |
+| 公共 pipeline | 调用加工、管理资源、组装元数据、检查最终产物、写出及回读校验 |
+
+契约声明预期，Python 加工函数执行运算。pipeline 不解释目标契约中的预处理声明来自动执行算法；最终产物检查也不能证明加工步骤实际执行正确。
+
+## 构建
+
+```text
+build_zarr(source_config, target_spec, source_path, destination, *, process, dry_run=False)
+```
+
+流程为：契约加载和源检查 → 读取源 → `process(raw, source_contract, spec)` → 标准组装 → `create_zarr` → 关闭源 → `validate_zarr(mode="quick")`。
+
+源检查覆盖文件发现、可读性、坐标标签唯一性、声明的 packed 结构及已出现映射变量的单位。它不证明未声明的日期覆盖、累计窗口或算法适用性；调用方须选择匹配输入语义和目标要求的加工实现。
+
+`process` 返回包含 `data/mean/std/mask` 的 `xr.Dataset`。数值、dtype、维度顺序、坐标、通道选择和附件由处理函数准备；`mean/std/mask` 等专属参数通过 `functools.partial` 绑定。
+
+`preparation.assemble_standard_dataset` 检查布局和精确对齐，填写根、data 和 channel 的标准属性，不排序、转型或修复数据。主数据可保持惰性；组装在新结果上填写元数据，额外坐标留给最终检查。UTC 等声明仍须由调用方保证真实语义。
+
+处理函数自行打开的附件须自行关闭，并保证返回数据在写出时可读取。pipeline 打开的源在检查和写出完成前保持打开，正常及异常退出均释放资源。创建检查和写出只调用一次 `create_zarr`，避免重复扫描。
+
+`BuildReport` 提供阶段状态、失败信息、`coverage`、`quick_passed`、`creation_report`、`validation_report` 及 `to_dict()`：
+
+- 正式构建须同时满足 `coverage["written"]` 与 `quick_passed`；quick 通过不等于完整发布验收。
+- `dry_run=True` 执行读取、加工及内存检查，不写出、不回读；以 `coverage["conformance_passed"]` 判断结果。
+- 已知契约、源检查和组装失败记录到报告；加工异常及意外程序错误继续抛出。
+- 拒绝已有输出及输入输出路径重叠。写出或校验失败保留可能存在的目录，不自动删除。
 
 ## 创建
 
 ```python
 report = create_zarr(
-    dataset, "/data/new/product.zarr", "config/dataset_specs/oras5_c88_p25_h24.yaml",
+    dataset, "/data/new/product.zarr", "/path/to/target.yaml",
     dry_run=True, output="/data/reports/create.json",
 )
 ```
 
-输入必须是外围准备好的 `xr.Dataset`；spec 接受 DatasetSchema 或 YAML 路径。
-创建不会重排通道、转换 dtype、归一化、合并附属变量或补充业务属性。
-数组结构、坐标、通道、属性、统计量、掩膜和数值质量通过检查后，才按 spec
-的分块和 Zarr 版本写出。继承的存储编码会在副本中清除，输入对象不会被关闭或修改。
+输入为已经准备好的 `xr.Dataset`，spec 接受 `DatasetSchema` 或 YAML 路径。创建不加工数据或补充业务元数据；结构、坐标、属性、统计量、掩膜及数值质量通过检查后，按契约的分块和 Zarr 版本写出。
 
-`dry_run=True` 只检查；`coverage.conformance_passed` 表示输入符合性，
-`coverage.written` 表示写出成功。始终拒绝覆盖目标；不符合时返回失败报告且不创建目标。
-创建报告不代表完整发布验收：外部附件、物理存储与发布证据需要 `validate_zarr` 检查。
+`coverage["conformance_passed"]` 表示输入符合性，`coverage["written"]` 表示写出成功。创建拒绝覆盖，不修改或关闭调用方的 Dataset。该检查不代替物理存储、外部附件及发布证据的验收；创建报告的可选文件输出使用 JSON。
 
 ## 时间追加
 
 ```python
-append_zarr(next_days, "/data/product.zarr")
+report = append_zarr(
+    source="/data/A.zarr", target="/data/B.zarr", destination="/data/C.zarr",
+    spec="/path/to/combined.yaml", output="/data/reports/append.yaml",
+)
+print(report.release_passed)
 ```
 
-固定沿 `time` 追加。源和目标要求相同变量、兼容 dtype、相同通道及非时间坐标、
-相同静态数组。时间坐标必须为无 NaT、唯一且递增的 datetime64，新时间严格晚于已有时间。
-不检查时间频率或连续性，不自动更新覆盖范围、版本或冻结证据。
+顺序固定为 **B + A → C**。A、B 均须非空，time 为无 NaT、唯一递增的 datetime64，A 首时刻严格晚于 B 末时刻；合并时间轴须精确匹配最终契约。变量与坐标名称、维度、dtype、元数据和静态数组须兼容，通道和网格须符合契约。
 
-追加与比较支持内存 Dataset 或源路径；追加路径读取可提供 `source_config`、
-`read_options` 和 `selection`。调用方的 Dataset 保持打开；函数自行打开的输入会关闭。
-追加沿用目标编码并刷新已有合并元数据；写入不是原子事务，需要串行管理写入。
+A 接受路径或调用方的 Dataset，B 必须是已有 Zarr 目录。路径读取支持 `source_config`、`selection`、`read_options`，固定 `load=False, chunks=None`。C 必须不存在且与输入隔离，不提供覆盖或原地替换选项。
 
-## 产物验收
+实现复制 B 后逐完整时间片读取 A 并写入 C，保留 B 的压缩、分块和时间编码，按最终契约更新 C 的身份与版本，刷新已有合并元数据。需要完整 BA 的额外磁盘空间，以及至少一个时间片和静态附件的内存；输入在整个操作期间须保持静止。
+
+输入关闭后内部执行 full 校验，按 `release_passed` 判断结果。调用方须提供最终产物的外部附件和发布证据。布局或时间错误在复制前抛出；写出异常向外传播，校验失败返回报告。失败 C 保留，不修改或替换 A、B。
+
+`output` 可保存新的 `.yaml` 校验报告，不得位于 A、B 或 C 内。设计理由、失败处理与取舍见 [ADR-0004](../../docs/adr/ADR-0004-append-to-separate-output.md)。
+
+## 验收
+
+`validate_zarr` 的输入是单份目标产物和契约，检查布局、坐标、类型、存储完整性、统计量、掩膜、附件及已声明的数值与发布规则。它不推断额外的变量物理范围、不执行加工算法，也不读取源数据进行转换对照。加工正确性由独立的源到目标对照能力验证。
 
 ```python
 report = validate_zarr(
-    "/data/product.zarr", "config/dataset_specs/oras5_c88_p25_h24.yaml",
-    output="/data/reports/validation.json",
+    "/data/product.zarr", "/path/to/target.yaml",
+    mode="full", output="/data/reports/validation.yaml",
 )
 ```
 
-默认 `mode="full"`；抽样使用 `mode="quick"`。可传 `on_block`、`max_blocks`、
-`memory_budget_mib`、`stop_requested` 控制扫描与中断。
-快速或中断的扫描不能授权完整发布。数值扫描、物理覆盖与证据完整性分别记录。
+公开检查参数为 `mode`、`auxiliary_directory`、`sample_blocks`、`max_blocks`、`memory_budget_mib`、`stop_requested` 和 `on_block`。计数必须是正整数，内存预算须有限且至少为 1 MiB，回调须可调用；非法参数在读取契约和数据前拒绝。
 
-`output=None` 不保存文件；指定时写单份 JSON，不覆盖输入、配置、证据或已有报告。
-若需生产快照和转换回执，在外围加载运行配置：
+默认 full，按 `release_passed` 判断通过；quick 按 `quick_passed` 判断。快速或中断的扫描不能授权完整发布。数值扫描、物理覆盖和证据完整性分别记录；`on_block`、`max_blocks`、`memory_budget_mib`、`stop_requested` 可控制扫描及中断。
+
+`output=None` 不保存报告。指定时只接受 `.yaml`，其他后缀在读取输入前报错；不能覆盖输入、配置、证据或已有报告。此处的 YAML 约束适用于校验报告，不改变其他接口的文件格式。
+
+报告 identity 中的 `validation_basis` 为 `target_contract_and_declared_rules`，`source_target_comparison` 为 false。契约要求转换回执时，会核验已有回执的摘要和绑定关系；这不代表本次执行了转换对照。缺少必需回执不能通过完整验收，格式错误的证据记录为失败，目标产物检查仍可继续。
+
+固定标准模型和严格 YAML 加载由 `datakit.schema` 提供，具体规范位于 [config/dataset_specs](../../config/dataset_specs)。运行快照和转换回执由 `configuration.load_validation_run` 加载，不写回标准契约：
 
 ```python
 from pathlib import Path
 from pipelines.dataset.configuration import load_validation_run
 
-spec, locations = load_validation_run(Path("config/validation/run.json"))
+spec, locations = load_validation_run(Path("/path/to/run.json"))
 report = validate_zarr(
     locations["dataset_path"], spec,
     auxiliary_directory=locations["auxiliary_directory"],
 )
 ```
-
-固定标准模型及严格 YAML 加载由 `datakit.schema` 提供，具体规范位于
-[`config/dataset_specs`](../../config/dataset_specs)。运行信息不写回标准 YAML。
 
 ## 比较
 
@@ -83,51 +131,26 @@ report = validate_zarr(
 difference = compare_zarr(source, target, mapping=None, atol=0, rtol=0)
 ```
 
-允许坐标顺序和变量维度顺序不同，但要求数组、维度和坐标标签集合完整对应，
-不静默取交集。可通过 mapping 字典或 YAML 显式指定源到目标的
-`dimensions`、`variables`、`channels` 名称映射。
+允许坐标和变量维度顺序不同，要求数组、维度和坐标标签集合完整对应，不取交集。mapping 字典或 YAML 可显式指定 `dimensions/variables/channels` 的名称映射。
 
-不改变单位或数值，不比较任意属性、存储编码和分块。对应 NaN 视为相等，
-默认精确比较，可配置容差。`memory_budget_mib` 限制逻辑块，不能约束后端解码缓冲区。
-数值比较直接复用 `datakit.validation.comparison.compare_datasets`。
+比较不换算单位，不核对任意属性、存储编码或分块。对应 NaN 视为相等，默认精确比较，可设置容差。`memory_budget_mib` 限制逻辑块，不能约束后端解码缓冲区；数值比较复用 `datakit.validation.comparison.compare_datasets`。
 
 ## 文件职责
 
-```text
-pipelines/dataset/
-├── create.py                  # 输入符合性检查与写出
-├── append.py                  # 时间追加
-├── validate.py                # 验收、扫描、资源及中断
-├── compare.py                 # 输入读取、名称映射与比较调用
-├── _sources.py                # 共享读取与资源所有权
-├── reports.py                 # 任务报告、发布结论、输出路径保护
-├── configuration.py           # DatasetValidationSpec、运行 JSON、证据引用及摘要验证
-├── evidence.py                # 生产/转换回执、来源及批准状态检查
-└── old/                       # 保留的旧处理逻辑
-    ├── conversion.py          # 旧格式构造与反归一化导出
-    ├── channel_metadata.py    # 旧业务通道属性生成
-    ├── netcdf_comparison.py   # 旧 Zarr/NetCDF 专项对照
-    ├── conversion_validation.py # 转换规则、配置加载和专项验收
-    ├── raw_truth.py           # ERA5 单日参考数据提取及专用定义
-    └── split.py               # NetCDF 时间/通道拆分
-```
+| 模块 | 职责 |
+| --- | --- |
+| `build.py` | 契约加载、源检查、加工调用、构建编排及源资源管理 |
+| `preparation.py` | 标准结构和元数据组装；可选的显式变量/阈值 mask 生成工具 |
+| `create.py` | 内存产物检查与写出 |
+| `append.py` | B + A 写入独立 C 并完整校验 |
+| `validate.py` | 落盘验收、扫描、资源预算及中断 |
+| `compare.py` | 输入读取、名称映射与比较调用 |
+| `_sources.py` | 共享读取及资源所有权管理 |
+| `reports.py` | 任务报告、检查结果汇总及报告路径保护 |
+| `configuration.py` | 运行规格、外部配置、证据引用及摘要验证 |
+| `evidence.py` | 生产和转换回执、来源及批准状态检查 |
+| `old/` | 格式转换、反归一化导出、NetCDF 拆分、实况提取和专项转换对照 |
 
-原 checks、workflows、support 目录和 zarr_dataset.py 已移除，不保留内部路径转接。
-对外通过包根目录调用公共函数；旧公共函数延迟指向 old 中的实现。`extract_raw_truth_day`、`convert_to_zarr`、
-NetCDF 导出/拆分及转换专项验收仍保留；它们没有被四个核心函数完全替代。
+`generate_mask` 是自定义加工可主动使用的工具：二值 1 表示陆地、0 表示海洋；比例值按显式阈值生成陆地 mask，海洋取互补。当前 ERA5/ORAS5 示例均读取外部 mask。
 
-四个操作直接使用本页介绍的 Python API。
-ERA5/ORAS5 制作及转换验收入口见 [`examples/dataset_building/history`](../../examples/dataset_building/history/README.md)。
-
-旧转换专用的 `ConversionChannelRule`、`ConversionValidationSpec`、`load_conversion_run`
-也集中在 `old/conversion_validation.py`，当前 configuration 不再包含它们。
-四个核心操作不导入 old。当前验收使用的转换回执核验仍留在 evidence.py。
-
-根目录只保留四个核心操作及其直接/间接依赖。ERA5 提取和 NetCDF 拆分也归入 old，
-这里的 old 表示核心操作以外的保留功能，不表示已禁用；包根目录公共调用方式不变。
-
-运行规格 `DatasetValidationSpec` 与配置加载统一在 configuration.py；pipeline 的 specifications.py 已删除。基础标准模型仍在 datakit.schema。
-
-old/netcdf_comparison.py 已改用结果式基础检查：输入结构不符合时不读取统计量或执行反归一化，
-失败报告保留检查 ID、状态和原因，并继续以 ValueError 向调用方报告失败。
-其统计量读取、反归一化及 JSON 保存均在该旧流程内维护，不再从 datakit.validation 导出。
+`old/` 中的功能仍由包根目录延迟导出，具体调用入口见 [处理示例](../../examples/dataset_processing/README.md) 和 [保留的制作流程](../../examples/dataset_building/history/README.md)。核心构建、创建、追加、验收和比较操作不导入这些实现。

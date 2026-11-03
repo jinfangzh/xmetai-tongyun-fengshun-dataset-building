@@ -1,85 +1,108 @@
-# 数据集制作示例
+# 标准数据集构建
 
-`standard_pipeline.py` 提供“两份契约、两个路径”的构建示例，适用于显式声明的
-ERA5/ORAS5 packed NetCDF 输入。它读取源配置的 IO 布局，通过显式选择的 ERA5 或 ORAS5
-处理函数转换数据、匹配统计量、组装元数据，再调用 `create_zarr` 检查和写出；不覆盖已有输出。
+本目录提供可直接运行和调试的构建、追加与校验示例，自定义加工写在 `example_build_*.py` 中，通用流程由 `pipelines.dataset` 执行：
 
-```bash
-python -m examples.dataset_building.standard_pipeline \
-  --processor era5 \
-  --source-config /path/to/source.yaml \
-  --target-spec /path/to/target.yaml \
-  --source /data/input.nc \
-  --destination /data/output/result.zarr \
-  --mean-nc /data/stats/mean.nc \
-  --std-nc /data/stats/std.nc \
-  --mask-nc /data/stats/mask.nc \
-  --dry-run
+```text
+加载契约与源数据 → process → 标准元数据组装 → 产物检查与写出 → 落盘 quick 校验
 ```
 
-源 YAML 使用 `config/data_sources` 的格式；单文件 packed NetCDF 可以声明
-`name: packed_nc`、`format: netcdf`、`layout: {}`、`example: input.nc`。
-目标 YAML 使用 `config/dataset_specs` 的格式，须与本次时间覆盖、通道、网格和身份一致。
-数据路径由命令行指定，目标文件名仍须满足目标规范的目录身份要求。
-源值须满足目标声明的源单位和累计窗口；此示例不自动推断这些语义，也不自动执行源 mapping，
-避免与目标预处理重复换算。
+## 运行构建用例
 
-Python 入口只接收两份契约、两个路径、处理函数及可选的 `dry_run`：
+修改用例末尾 `__main__` 中的契约、数据和附件路径，然后在仓库根目录运行；也可直接在 IDE 中设置断点调试。
+
+```bash
+python -m examples.dataset_building.example_build_era5
+python -m examples.dataset_building.example_build_oras5
+```
+
+默认正式构建且不覆盖已有输出。在脚本中设置 `dry_run = True`，执行加工与内存产物检查，不写出、不执行落盘校验。
+
+| 用例 | 目标规格 | 专属加工 |
+| --- | --- | --- |
+| `example_build_era5.py` | `era5_c78_p25_h6` | 风速合成、通道选择、单位换算、降水非负裁剪与 log1p、归一化；辐射累计窗口为 6 小时 |
+| `example_build_oras5.py` | `oras5_c88_p25_h24` | 通道选择与归一化 |
+
+两个用例均支持外部 mean/std；未提供时，要求源时间与目标完整一致，在归一化前按通道沿 time/lat/lon 计算（忽略 NaN，ddof=0）。统计量须符合目标契约。当前用例的 `mask_path` 必须提供。
+
+## 开发自定义加工
+
+在本目录新增 `example_build_<源数据>.py`，定义：
+
+```python
+def process(dataset, source_contract, spec, *, mean_path=None, std_path=None, mask_path=None):
+    # 加工数据、准备附件，并设置目标 dtype、坐标和通道顺序。
+    ...
+    return product  # xarray.Dataset，包含 data、mean、std、mask
+```
+
+`process` 负责单位换算、派生变量、重采样、归一化及附件准备。使用 `datakit.io` 读取附件、`datakit.transforms` 组合基础算子；自行打开的附件应在关闭前加载所需数据。
+
+pipeline 负责源资源管理、标准元数据组装、检查、写出和回读校验，不修复加工结果或自动执行目标契约中的预处理声明。返回数组的类型、布局、坐标和通道顺序须满足契约；统计量应对应归一化前的数据域。
+
+| 基础算子 | 职责 |
+| --- | --- |
+| `compute_mean_std` | 按指定维度计算 mean/std，使用 float64 归约 |
+| `apply_scale` | 按显式变量系数缩放 |
+| `apply_log1p` | 对指定变量执行 log1p，不自动裁剪 |
+| `apply_zscore` | 使用对齐的 mean/std 执行归一化 |
+
+源契约参考 [`config/data_sources`](../../config/data_sources)，目标契约参考 [`config/dataset_specs`](../../config/dataset_specs)。选择与源单位、累计窗口及目标语义匹配的加工脚本；目标契约和输出路径须匹配本次产物的覆盖范围、网格、通道及身份。
+
+## Python 任务接口
+
+示例直接调用 `pipelines.dataset` 中的任务接口。需要在自己的程序中组织构建时，通过 `partial` 绑定加工参数：
 
 ```python
 from functools import partial
-from examples.dataset_building.standard_pipeline import build_dataset, process_era5
+from pipelines.dataset import build_zarr
+from examples.dataset_building.example_build_era5 import process
 
-process = partial(
-    process_era5,
-    mean_path="/data/stats/mean.nc",
-    std_path="/data/stats/std.nc",
-    mask_path="/data/stats/mask.nc",
-    accumulation_hours=6,
+report = build_zarr(
+    source_config="/path/to/source.yaml",
+    target_spec="/path/to/target.yaml",
+    source_path="/data/input.nc",
+    destination="/data/output/product.zarr",
+    process=partial(process, mean_path="/data/mean.nc", std_path="/data/std.nc", mask_path="/data/mask.nc"),
+    dry_run=False,
 )
-report = build_dataset(
-    "source.yaml", "target.yaml", "/data/input.nc", "/data/output/result.zarr",
-    process=process,
-    dry_run=True,
-)
+print(report.to_dict())
 ```
 
-阶段入口：`load_source_contract` → `load_target_contract` → `validate_source` → `read_source` → `process(raw, spec)` → `write_product` → `validate_product`。
-`process` 返回完整的目标 Dataset，统计量和掩膜由处理函数加载、匹配并组装，pipeline 不管理这些参数。
-内置 `process_era5` 明确执行风速合成、单位预处理和归一化；`process_oras5` 只选择通道并归一化。
-两者检查目标处理声明与自身算法一致，不解释任意 YAML 运算。ORAS5 使用 `--processor oras5`。
-其他时间/空间/变量操作在自定义处理函数中明确编写；特殊文件组织由源 IO 配置描述。
+具体用例在 `__main__` 中设置参数并调用实际加工函数；正常导入不执行任务。
 
-写出前 `create_zarr` 执行内存产物检查，成功写出后最后调用 `validate_zarr(mode="quick")` 检查落盘数据和声明的外部附件。
-普通运行返回 quick 校验报告，CLI 以 `quick_passed` 判断成功；写出失败返回创建报告。
-`dry_run` 不写出，返回内存产物的创建检查报告。quick 检查不等于完整扫描或发布放行。
-目标规范要求的 const/weight 等外部附件仍需由任务准备，本例只组装 mean/std/mask。
-`validate_source(source_path, source_config)` 在处理前逐文件检查路径、布局匹配、可读性、
-坐标标签唯一性、显式 packed 结构，以及已出现映射变量的源单位。错误抛异常，停止后续处理。
-mapping 是可选映射，不作为必需变量清单；单位只进行声明字符串的严格比较，不自动换算。
-该接口不扫描主数据值，也不证明未声明的日期覆盖、时间语义或物理范围；返回摘要明确检查范围。
+## 追加与校验
 
-默认读取惰性访问数据，但不提供流式追加或强制内存预算，先用于小样本。
-mean/std 应对应 zscore 前的数据域；log1p 通道的有效统计量必须符合目标声明。
-旧 ORAS5 的 `so19979` 等通道不能自动视为现行规范的 `os19978`。
-
-当前保留的具体制作流程位于 [history](history/README.md)：
-
-| 示例 | 用途 |
-| --- | --- |
-| `history/era5_nc_to_zarr.py` | ERA5 日 NetCDF、单位预处理、归一化与 Zarr 写出 |
-| `history/oras5_nc_to_zarr_88.py` | ORAS5 日数据组装、归一化与 Zarr 写出 |
-| `history/validate_standard_conversion.py` | 按转换规则对照源数据与目标产物 |
-
-在仓库根目录查看参数：
+修改 [example_append_era5.py](example_append_era5.py)、[example_validate_era5.py](example_validate_era5.py) 中的路径后，可直接运行或调试：
 
 ```bash
-python -m examples.dataset_building.history.era5_nc_to_zarr --help
-python -m examples.dataset_building.history.oras5_nc_to_zarr_88 --help
+python -m examples.dataset_building.example_append_era5
+python -m examples.dataset_building.example_validate_era5
 ```
 
-历史制作脚本会删除已有目标目录后重新生成数据，运行前应确认 `--destination`。
-具体输入要求和制作命令见 [history/README.md](history/README.md)。
+也可直接调用：
 
-创建、追加、验收、比较直接使用 `pipelines.dataset` 的 Python API，
-参数与调用方式见 [流程说明](../../pipelines/dataset/README.md)。
+```python
+from pipelines.dataset import append_zarr, validate_zarr, compare_zarr
+
+# 已有 B + 后续 A → 独立 C，内部执行完整校验。
+report = append_zarr(
+    source="/data/A.zarr", target="/data/B.zarr", destination="/data/C.zarr",
+    spec="/path/to/combined_target.yaml", output="/data/reports/append.yaml",
+)
+print(report.release_passed)
+
+report = validate_zarr(
+    target="/data/C.zarr", spec="/path/to/combined_target.yaml",
+    mode="full", output="/data/reports/validation.yaml",
+)
+print(report.release_passed)
+
+comparison = compare_zarr(source="/data/reference.zarr", target="/data/C.zarr")
+print(comparison["equal"])
+```
+
+追加按 B + A 生成独立 C，保留输入且拒绝已有输出，写出后内部执行 full 校验。契约须描述完整 BA，并准备相应外部附件及发布证据。追加期间输入保持静止，预留完整 BA 的额外磁盘空间；内存至少容纳一个时间片及静态附件。
+
+独立校验只检查目标产物与契约及声明规则，不执行源到目标的加工对照；默认 full，按 `release_passed` 判断通过；quick 按 `quick_passed` 判断，不代替完整验收。`output=None` 不保存报告；指定校验报告时仅接受新的 `.yaml` 路径。
+
+接口参数、模块职责、资源管理及失败处理统一见 [数据集任务接口](../../pipelines/dataset/README.md)。

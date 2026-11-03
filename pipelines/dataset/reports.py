@@ -208,3 +208,50 @@ def ensure_report_destination(
             raise ValueError(
                 "Report output must not overwrite input configuration or evidence files"
             )
+
+
+@dataclass
+class BuildReport:
+    """Build result; retain both creation and read-back diagnostics."""
+
+    destination: str
+    dry_run: bool = False
+    stages: dict[str, str] = field(default_factory=lambda: dict.fromkeys(
+        ("source_contract", "source_check", "target_contract", "read", "process",
+         "assemble", "create", "input_check", "write", "validate"), "not-run"))
+    failures: list[dict] = field(default_factory=list)
+    creation_report: object = None
+    validation_report: object = None
+    coverage: dict = field(init=False)
+
+    def __post_init__(self):
+        self.coverage = {"destination": self.destination, "dry_run": self.dry_run,
+                         "conformance_passed": False, "written": False}
+
+    @property
+    def quick_passed(self):
+        return (self.stages["validate"] == "passed" and not self.failures
+                and self.validation_report.quick_passed)
+
+    def fail(self, stage, message, error=None):
+        self.stages[stage] = "failed"
+        self.failures.append({"stage": stage, "message": message,
+                              "type": type(error).__name__ if error else None})
+        # A failed dry-run must never satisfy the unchanged CLI success check.
+        if self.dry_run:
+            self.coverage["conformance_passed"] = False
+
+    def fail_checks(self, stage, report):
+        failures = [check for check in getattr(report, "checks", ())
+                    if check.status not in ("pass", "warning", "not-applicable")]
+        self.fail(stage, "; ".join(check.check_id for check in failures)
+                  or f"{stage} did not pass; see the underlying report")
+
+    def to_dict(self):
+        return {"destination": self.destination, "stages": dict(self.stages),
+                "failures": list(self.failures), "coverage": dict(self.coverage),
+                "quick_passed": self.quick_passed,
+                "creation_report": (self.creation_report.to_dict()
+                                    if self.creation_report is not None else None),
+                "validation_report": (self.validation_report.to_dict()
+                                      if self.validation_report is not None else None)}

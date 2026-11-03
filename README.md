@@ -39,7 +39,7 @@ xmetai-datakit-server/
 │   └── evaluation/             数据适配、配对、评测执行和结果输出
 ├── examples/                   具体数据和任务的使用入口
 │   ├── dataset_io/             YAML 驱动的统一读取与导出示例
-│   ├── dataset_building/       数据集制作及 YAML 标准验收入口
+│   ├── dataset_building/       标准数据集构建策略、维护入口及历史脚本
 │   ├── dataset_processing/     数据处理与导出脚本
 │   ├── dataset_downloader/     数据下载方案
 │   ├── validation/             基础 NetCDF/Zarr 对照示例

@@ -1,4 +1,4 @@
-"""Read-only dataset validation with shared quick/full scanning and resource checks."""
+"""Read-only target-contract validation; source/target comparisons are separate."""
 
 from __future__ import annotations
 
@@ -9,10 +9,12 @@ import time
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
+from numbers import Integral, Real
 from typing import Any, Callable
 
 import numpy as np
 import xarray as xr
+import yaml
 
 from datakit import io as dataset_io
 from datakit.runtime import memory
@@ -245,6 +247,36 @@ def scan_standard_blocks(
     return stable
 
 
+def _check_scan_options(mode, sample_blocks, max_blocks, memory_budget_mib,
+                        stop_requested, on_block):
+    if not isinstance(mode, str) or mode not in ("quick", "full"):
+        raise ValueError("mode must be 'quick' or 'full'")
+    for name, value in (("sample_blocks", sample_blocks), ("max_blocks", max_blocks)):
+        if name == "max_blocks" and value is None:
+            continue
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral) or value < 1:
+            raise ValueError(f"{name} must be a positive integer")
+    if (isinstance(memory_budget_mib, (bool, np.bool_))
+            or not isinstance(memory_budget_mib, Real)
+            or not math.isfinite(memory_budget_mib) or memory_budget_mib < 1):
+        raise ValueError("memory_budget_mib must be finite and at least 1")
+    for name, callback in (("stop_requested", stop_requested), ("on_block", on_block)):
+        if callback is not None and not callable(callback):
+            raise TypeError(f"{name} must be callable or None")
+
+
+def _read_bound_receipt(reference, label):
+    # Hash exactly the bytes that are parsed, rather than reopening after hashing.
+    raw = reference.path.read_bytes()
+    observed_hash = hashlib.sha256(raw).hexdigest()
+    if observed_hash.lower() != reference.sha256.lower():
+        raise ValueError(f"{label} SHA256 differs from frozen reference")
+    receipt = json.loads(raw)
+    if not isinstance(receipt, dict):
+        raise ValueError(f"{label} must contain a JSON object")
+    return receipt, observed_hash
+
+
 def _verify_production_evidence(
     spec: DatasetValidationSpec, report: ValidationReport
 ) -> bool:
@@ -252,13 +284,7 @@ def _verify_production_evidence(
     if reference is None or not spec.snapshot_id:
         return check_production_receipt(spec, report, None)
     try:
-        observed_hash = file_sha256(reference.path)
-        if observed_hash.lower() != reference.sha256.lower():
-            raise ValueError(
-                "Production receipt SHA256 differs from independently frozen value"
-            )
-        with reference.path.open(encoding="utf-8") as stream:
-            receipt = json.load(stream)
+        receipt, observed_hash = _read_bound_receipt(reference, "Production receipt")
         return check_production_receipt(spec, report, receipt, observed_hash)
     except (OSError, ValueError, TypeError) as exc:
         report.add(
@@ -268,6 +294,31 @@ def _verify_production_evidence(
             evidence=f"{type(exc).__name__}: {exc}",
         )
         return False
+
+
+def _check_declared_conversion_evidence(spec, report):
+    """Verify supplied evidence and declared requirements, never run a conversion."""
+    category = "conversion_fidelity"
+    reference = spec.conversion_evidence
+    if reference is not None:
+        try:
+            receipt, _ = _read_bound_receipt(reference, "Conversion receipt")
+            attach_conversion_evidence(report, receipt)
+        except (OSError, ValueError, TypeError) as exc:
+            report.add(
+                f"{category}.external_evidence", "fail", category, evidence=str(exc)
+            )
+    else:
+        report.add(
+            f"{category}.external_evidence",
+            "not-run" if spec.conversion_required else "not-applicable",
+            category,
+            evidence=(
+                "Contract requires an independently generated conversion receipt; no source/target comparison is executed here"
+                if spec.conversion_required
+                else "Not selected by this instance profile"
+            ),
+        )
 
 
 def _validate_dataset(
@@ -293,13 +344,6 @@ def _validate_dataset(
     if not isinstance(spec, DatasetValidationSpec):
         spec = DatasetValidationSpec.from_schema(spec)
     spec.validate_configuration()
-    if (
-        mode not in ("quick", "full")
-        or sample_blocks < 1
-        or memory_budget_mib < 1
-        or (max_blocks is not None and max_blocks < 1)
-    ):
-        raise ValueError("Invalid mode, sample count, maximum blocks or memory budget")
     root = Path(path).expanduser().resolve()
     auxiliary = (
         Path(auxiliary_directory).expanduser().resolve()
@@ -323,6 +367,8 @@ def _validate_dataset(
         "path": str(root),
         "tool_version": "datakit-standard-validation/1.8",
         "validation_scope": spec.validation_scope,
+        "validation_basis": "target_contract_and_declared_rules",
+        "source_target_comparison": False,
         "mask_schema_id": spec.product.mask.schema_id,
         "mask_schema_version": spec.product.mask.version,
     }
@@ -358,31 +404,7 @@ def _validate_dataset(
     )
     started = time.monotonic()
     stable = _verify_production_evidence(spec, report)
-    category = "conversion_fidelity"
-    reference = spec.conversion_evidence
-    if reference is not None:
-        try:
-            if file_sha256(reference.path).lower() != reference.sha256.lower():
-                raise ValueError(
-                    "External receipt SHA256 differs from frozen reference"
-                )
-            with reference.path.open(encoding="utf-8") as stream:
-                attach_conversion_evidence(report, json.load(stream))
-        except (OSError, ValueError, TypeError) as exc:
-            report.add(
-                f"{category}.external_evidence", "fail", category, evidence=str(exc)
-            )
-    else:
-        report.add(
-            f"{category}.external_evidence",
-            "not-run" if spec.conversion_required else "not-applicable",
-            category,
-            evidence=(
-                "Required source/target checks must be run independently and attached"
-                if spec.conversion_required
-                else "Not selected by this instance profile"
-            ),
-        )
+    _check_declared_conversion_evidence(spec, report)
     metadata_before = None
     quality = None
     loaded_regions = {}
@@ -783,27 +805,41 @@ def _validate_dataset(
     return report
 
 
-def validate_zarr(target, spec, output=None, *, mode="full", **options):
-    """Validate one dataset and return its report; save JSON only with output.
+def validate_zarr(
+    target, spec, output=None, *, mode="full", auxiliary_directory=None,
+    sample_blocks=3, max_blocks=None, memory_budget_mib=2048,
+    stop_requested=None, on_block=None,
+):
+    """Check one target against its contract and declared numerical rules.
 
-    output=None performs no report-file writes. An explicit output must be
-    outside input datasets and cannot overwrite existing reports or inputs.
+    Verify structure, storage, coordinates, statistics, masks and declared values,
+    auxiliaries and publication evidence. Optional conversion receipts are only
+    verified as evidence; this API never reads source data or executes transforms.
+    Full checks all expected frames; quick/max_blocks/interruption cannot certify
+    full release. Execution controls must be valid before any input is read.
+    output=None writes nothing; .yaml reports cannot overwrite inputs or reports.
     """
     from datakit.schema import load_schema
 
     from .configuration import DatasetValidationSpec, validation_input_files
     from .reports import ensure_report_destination
 
+    if output is not None and Path(output).suffix != ".yaml":
+        raise ValueError("Validation report output must use the .yaml suffix")
+    _check_scan_options(mode, sample_blocks, max_blocks, memory_budget_mib,
+                        stop_requested, on_block)
     target = Path(target).expanduser().resolve()
     if isinstance(spec, (str, Path)):
         spec, _ = load_schema(spec)
+    if not isinstance(spec, DatasetSchema):
+        raise TypeError("spec must be a DatasetSchema or a schema YAML path")
     if not isinstance(spec, DatasetValidationSpec):
         spec = DatasetValidationSpec.from_schema(spec)
     destination = None
     if output is not None:
         destination = Path(output).expanduser().absolute()
         auxiliary = (
-            Path(options.get("auxiliary_directory") or target).expanduser().resolve()
+            Path(auxiliary_directory or target).expanduser().resolve()
         )
         ensure_report_destination(
             destination,
@@ -814,13 +850,18 @@ def validate_zarr(target, spec, output=None, *, mode="full", **options):
             raise FileExistsError(
                 f"Refusing to overwrite an existing report: {destination}"
             )
-    report = _validate_dataset(target, spec, mode=mode, **options)
+    report = _validate_dataset(
+        target, spec, mode=mode, auxiliary_directory=auxiliary_directory,
+        sample_blocks=sample_blocks, max_blocks=max_blocks,
+        memory_budget_mib=memory_budget_mib, stop_requested=stop_requested,
+        on_block=on_block,
+    )
     if destination is not None:
         report.identity["report_path"] = str(destination)
-        content = json.dumps(
-            report.to_dict(), ensure_ascii=False, indent=2, allow_nan=False
+        content = yaml.safe_dump(
+            report.to_dict(), allow_unicode=True, sort_keys=False
         )
         destination.parent.mkdir(parents=True, exist_ok=True)
         with destination.open("x", encoding="utf-8") as stream:
-            stream.write(content + "\n")
+            stream.write(content)
     return report

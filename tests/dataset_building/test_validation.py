@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import yaml
 
 import numpy as np
 import pytest
@@ -29,7 +30,7 @@ def _validate_runs(runs, output, **options):
         report = validate_zarr(
             locations["dataset_path"],
             spec,
-            output=output / f"{number}.json",
+            output=output / f"{number}.yaml",
             auxiliary_directory=locations["auxiliary_directory"],
             **options,
         )
@@ -40,8 +41,8 @@ def _validate_runs(runs, output, **options):
 def _assert_saved_reports(output, reports):
     assert len(list(output.iterdir())) == len(reports)
     for number, report in enumerate(reports, start=1):
-        saved = output / f"{number}.json"
-        assert json.loads(saved.read_text(encoding="utf-8")) == report
+        saved = output / f"{number}.yaml"
+        assert yaml.safe_load(saved.read_text(encoding="utf-8")) == report
         coverage = report["coverage"]
         assert coverage["value_checked"] + coverage["read_failed"] + coverage["not_scanned"] == 12
         assert (

@@ -8,6 +8,8 @@ from .coordinates import (
     standardize_dimensions,
 )
 from .normalization import (
+    apply_zscore,
+    compute_mean_std,
     denormalize_xarray,
     normalize_xarray,
 )
@@ -29,6 +31,8 @@ from .temporal import (
     window_sum_at,
 )
 from .units import (
+    apply_log1p,
+    apply_scale,
     apply_affine,
     invert_affine,
     log1p_variables,
@@ -38,6 +42,10 @@ from .units import (
 from .variables import channel_to_level, level_to_channel, standardize_variable_names
 
 __all__ = [
+    "apply_log1p",
+    "apply_scale",
+    "apply_zscore",
+    "compute_mean_std",
     "RegularLatLonRegridder",
     "GridToStationInterpolator",
     "TimeWindowAccumulator",

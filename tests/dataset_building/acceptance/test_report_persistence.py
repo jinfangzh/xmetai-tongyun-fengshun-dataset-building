@@ -127,11 +127,11 @@ def test_public_api_validates_independent_published_land_fixture(published, tmp_
         ),
         encoding="utf-8",
     )
-    output = tmp_path / "report.json"
+    output = tmp_path / "report.yaml"
     runtime_spec, locations = load_validation_run(run)
     report = validate_zarr(locations["dataset_path"], runtime_spec, output=output)
     assert report.release_passed
-    saved = json.loads(output.read_text())
+    saved = yaml.safe_load(output.read_text())
     assert saved["release_passed"]
     identity = saved["identity"]
     assert identity["config_id"] == "fixture.land"
@@ -144,7 +144,7 @@ def test_public_api_validates_independent_published_land_fixture(published, tmp_
     assert output.read_bytes() == frozen
     assert not list(tmp_path.glob("*.jsonl"))
     assert not (tmp_path / "summary.csv").exists()
-    forbidden = destination / "reports.json"
+    forbidden = destination / "reports.yaml"
     with pytest.raises(ValueError):
         validate_zarr(destination, runtime_spec, output=forbidden)
     assert not forbidden.exists()

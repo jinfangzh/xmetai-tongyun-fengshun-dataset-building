@@ -43,11 +43,11 @@ report = validate_zarr("/data/land.zarr", "config/dataset_specs/era5_land_c8_1p5
 # 需要保存时显式指定文件。
 report = validate_zarr(
     "/data/land.zarr", "config/dataset_specs/era5_land_c8_1p5_h24.yaml",
-    output="/path/outside/data/report.json",
+    output="/path/outside/data/report.yaml",
 )
 ```
 
-`output=None` 不保存文件；指定路径时保存单份 JSON，已有文件拒绝覆盖。
+`output=None` 不保存文件；指定路径时保存单份 YAML，仅接受 `.yaml` 后缀，已有文件拒绝覆盖。
 默认完整检查；抽样时传 `mode="quick"`。有冻结证据时在外围使用 load_validation_run 加载 spec。
 转换专项的 `validate_standard_conversion.py` 保留独立入口。
 

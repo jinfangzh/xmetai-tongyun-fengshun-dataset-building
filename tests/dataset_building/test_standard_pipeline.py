@@ -4,13 +4,17 @@ from dataclasses import replace
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 import xarray as xr
 
 from datakit.schema import load_schema
-from examples.dataset_building import standard_pipeline as pipeline
+from pipelines.dataset import build as pipeline, preparation
+from datakit.transforms import preprocess_channel_units
+from examples.dataset_building import example_build_era5 as era5
+from examples.dataset_building import example_build_oras5 as oras5
 
 
 @pytest.fixture(params=["era5_c78_p25_h6", "era5_c116_p25_h6", "oras5_c88_1p5_h24"])
@@ -44,12 +48,48 @@ def inputs(request):
 
 
 def processor(spec, root=Path(".")):
-    function = pipeline.process_era5 if spec.product.product_id.startswith("era5") else pipeline.process_oras5
+    function = era5.process if spec.product.product_id.startswith("era5") else oras5.process
     return partial(function, mean_path=root / "mean.nc", std_path=root / "std.nc", mask_path=root / "mask.nc")
 
 
+def auxiliary_access(arrays):
+    """Fake only the IO boundary; production conversion code selects and loads variables."""
+    return lambda path: SimpleNamespace(read=lambda **options: xr.Dataset(arrays))
+
+
 def value_processor(spec):
-    return pipeline._era5_values if spec.product.product_id.startswith("era5") else pipeline._oras5_values
+    module = era5 if spec.product.product_id.startswith("era5") else oras5
+    process = module.process
+
+    def values(raw, target, mean, std):
+        lat, lon = target.variant.grid.coordinates()
+        mask = xr.DataArray(np.stack([np.ones((len(lat), len(lon)), dtype='u1'),
+                                      np.zeros((len(lat), len(lon)), dtype='u1')]),
+                            dims=('mask_channel', 'lat', 'lon'),
+                            coords={'mask_channel': ['land_mask', 'sea_mask'], 'lat': lat, 'lon': lon})
+        arrays = {'mean': mean, 'std': std, 'mask': mask}
+        with patch.object(module.io, 'open', side_effect=auxiliary_access(arrays)):
+            return process(raw, {}, target, mean_path='mean', std_path='std', mask_path='mask').data
+    return values
+
+
+def reference_physical(raw, spec):
+    """Pre-refactor aggregate operator, used as an independent numerical reference."""
+    data = raw.data.astype('float32')
+    if not spec.product.product_id.startswith('era5'):
+        return data.sel(channel=list(spec.product.channel_names))
+    derived = []
+    for name, height in (('ws10m', '10m'), ('ws100m', '100m')):
+        if name in spec.product.channel_names:
+            wind = np.hypot(data.sel(channel=f'u{height}', drop=True),
+                            data.sel(channel=f'v{height}', drop=True))
+            derived.append(wind.expand_dims(channel=[name]))
+    if derived:
+        names = [str(item.channel.values[0]) for item in derived]
+        data = xr.concat([data.drop_sel(channel=[n for n in names if n in data.channel]),
+                          *derived], dim='channel', join='exact')
+    return preprocess_channel_units(data.sel(channel=list(spec.product.channel_names)),
+                                    accumulation_hours=6.)
 
 
 def test_era5_and_oras5_share_contract_bound_pipeline(inputs, tmp_path, monkeypatch):
@@ -64,10 +104,10 @@ def test_era5_and_oras5_share_contract_bound_pipeline(inputs, tmp_path, monkeypa
         return raw
 
     monkeypatch.setattr(pipeline, "validate_source", lambda *args: None)
-    monkeypatch.setattr(pipeline, "_load_array", lambda path, name: auxiliaries[name])
+    monkeypatch.setattr(era5.io, 'open', auxiliary_access(auxiliaries))
     monkeypatch.setattr(pipeline.io, "open_dataset", lambda path, description:
                         SimpleNamespace(read=lambda **options: reader(path, description, **options)))
-    report = pipeline.build_dataset(
+    report = pipeline.build_zarr(
         {"name": "physical", "format": "netcdf", "layout": {}, "example": "data.nc"},
         spec, tmp_path / "input.nc", tmp_path / "result.zarr",
         process=processor(spec, tmp_path), dry_run=True,
@@ -83,22 +123,20 @@ def test_era5_and_oras5_share_contract_bound_pipeline(inputs, tmp_path, monkeypa
     result = value_processor(spec)(raw, spec, mean, std)
     if spec.product.product_id.startswith("era5"):
         np.testing.assert_allclose(result.sel(channel="q50"), 1000)
-        np.testing.assert_allclose(result.sel(channel="tp"), np.log1p(1000))
-        np.testing.assert_allclose(result.sel(channel="ssr"), 1 / 21600)
+        np.testing.assert_allclose(result.sel(channel="tp"), np.float16(np.log1p(1000)))
+        np.testing.assert_allclose(result.sel(channel="ssr"), np.float16(1 / 21600))
         if "ws10m" in result.channel:
-            np.testing.assert_allclose(result.sel(channel="ws10m"), np.sqrt(2))
+            np.testing.assert_allclose(result.sel(channel="ws10m"), np.float16(np.sqrt(2)))
     else:
         np.testing.assert_allclose(result, 1)
 
 
-def test_shifted_mask_is_rejected_instead_of_aligned_silently(inputs):
+def test_shifted_mask_is_rejected_instead_of_aligned_silently(inputs, monkeypatch):
     spec, raw, aux = inputs
-    channels = list(spec.product.channel_names)
-    data = raw.data
-    mask = aux["mask"].assign_coords(lat=aux["mask"].lat + 0.5)
+    aux = {**aux, 'mask': aux['mask'].assign_coords(lat=aux['mask'].lat + .5)}
+    monkeypatch.setattr(era5.io, 'open', auxiliary_access(aux))
     with pytest.raises(ValueError):
-        pipeline.assemble_product(data, spec, aux["mean"].sel(channel=channels),
-                                  aux["std"].sel(channel=channels), mask)
+        processor(spec)(raw, {}, spec)
 
 
 def test_missing_channel_is_not_renamed(inputs):
@@ -113,8 +151,8 @@ def test_existing_destination_is_preserved(tmp_path):
     target = tmp_path / "result.zarr"
     target.mkdir()
     with pytest.raises(FileExistsError):
-        pipeline.build_dataset({}, "unused.yaml", tmp_path / "input.nc", target,
-                               process=pipeline.process_oras5)
+        pipeline.build_zarr({}, "unused.yaml", tmp_path / "input.nc", target,
+                               process=oras5.process)
 
 
 def test_reader_is_closed_when_processing_fails(inputs, tmp_path, monkeypatch):
@@ -122,7 +160,7 @@ def test_reader_is_closed_when_processing_fails(inputs, tmp_path, monkeypatch):
     closed = []
     raw.set_close(lambda: closed.append(True))
     monkeypatch.setattr(pipeline, "validate_source", lambda *args: None)
-    monkeypatch.setattr(pipeline, "_load_array", lambda path, name: aux[name])
+    monkeypatch.setattr(era5.io, 'open', auxiliary_access(aux))
     monkeypatch.setattr(pipeline.io, "open_dataset", lambda *args:
                         SimpleNamespace(read=lambda **kwargs: raw))
 
@@ -130,7 +168,7 @@ def test_reader_is_closed_when_processing_fails(inputs, tmp_path, monkeypatch):
         raise ValueError("Explicit strategy failed")
 
     with pytest.raises(ValueError, match="strategy failed"):
-        pipeline.build_dataset(
+        pipeline.build_zarr(
             {"name": "source", "layout": {}, "example": "data.nc"}, spec,
             tmp_path / "input.nc", tmp_path / "result.zarr",
             process=fail,
@@ -144,7 +182,7 @@ def test_real_netcdf_reader_and_auxiliaries(inputs, tmp_path):
     raw.to_netcdf(source, engine="scipy")
     for name, array in aux.items():
         array.to_dataset().to_netcdf(tmp_path / f"{name}.nc", engine="scipy")
-    report = pipeline.build_dataset(
+    report = pipeline.build_zarr(
         {"name": "packed_nc", "format": "netcdf", "layout": {}, "example": "input.nc"},
         spec, source, tmp_path / "result.zarr",
         process=processor(spec, tmp_path), dry_run=True,
@@ -152,97 +190,49 @@ def test_real_netcdf_reader_and_auxiliaries(inputs, tmp_path):
     assert report.coverage["conformance_passed"], report.to_dict()
 
 
-def test_processor_rejects_a_different_target_recipe(inputs):
+def test_processor_algorithm_does_not_interpret_target_recipe(inputs):
     spec, raw, aux = inputs
     first, *rest = spec.product.channels
     changed = replace(first, preprocessing=({"operation": "log1p"},))
     altered = replace(spec, product=replace(spec.product, channels=(changed, *rest)))
-    with pytest.raises(ValueError, match="recipe differs|only unconverted zscore"):
-        value_processor(spec)(raw, altered, aux["mean"], aux["std"])
+    # Processing is explicit Python; recipe metadata must not select new operations.
+    before = value_processor(spec)(raw, spec, aux["mean"], aux["std"])
+    after = value_processor(spec)(raw, altered, aux["mean"], aux["std"])
+    np.testing.assert_array_equal(after.values, before.values)
 
 
-def test_invalid_mask_cannot_wrap_into_valid_uint8(inputs):
+def test_invalid_mask_cannot_wrap_into_valid_uint8(inputs, monkeypatch):
     spec, raw, aux = inputs
-    channels = list(spec.product.channel_names)
-    mask = aux["mask"].astype("int16")
+    mask = aux['mask'].astype('int16')
     mask.values[0, 0, 0] = 257
-    with pytest.raises(ValueError, match="binary integer"):
-        pipeline.assemble_product(raw.data, spec, aux["mean"].sel(channel=channels),
-                                  aux["std"].sel(channel=channels), mask)
-
-
-def test_pipeline_validates_written_output_after_closing_source(tmp_path, monkeypatch):
-    events = []
-    raw = xr.Dataset()
-    raw.set_close(lambda: events.append("close_source"))
-    spec = object()
-    product = xr.Dataset({"prepared": ("sample", [1.0])})
-    creation = SimpleNamespace(coverage={"written": True, "conformance_passed": True})
-    # A successful write must not hide a failed final validation.
-    validation = SimpleNamespace(coverage={}, quick_passed=False)
-
-    def load_source(*args):
-        events.append("load_source_contract")
-        return {}
-
-    def load_target(*args):
-        events.append("load_target_contract")
-        return spec
-
-    def read(*args):
-        events.append("read")
-        return raw
-
-    def process(dataset, target):
-        assert dataset is raw and target is spec
-        events.append("process")
-        return product
-
-    def write(dataset, destination, target, **options):
-        assert dataset is product and target is spec
-        events.append("write")
-        return creation
-
-    def validate(destination, target, *, mode):
-        assert destination == tmp_path / "result.zarr" and target is spec
-        assert mode == "quick"
-        events.append("validate")
-        return validation
-
-    monkeypatch.setattr(pipeline, "validate_source", lambda *args: events.append("validate_source"))
-    monkeypatch.setattr(pipeline, "load_source_contract", load_source)
-    monkeypatch.setattr(pipeline, "load_target_contract", load_target)
-    monkeypatch.setattr(pipeline, "read_source", read)
-    monkeypatch.setattr(pipeline, "write_product", write)
-    monkeypatch.setattr(pipeline, "validate_zarr", validate)
-    result = pipeline.build_dataset({}, spec, tmp_path / "input.nc", tmp_path / "result.zarr",
-                                    process=process)
-    assert result is validation and not result.quick_passed
-    assert events == ["load_source_contract", "load_target_contract", "validate_source", "read", "process", "write", "close_source", "validate"]
+    aux = {**aux, 'mask': mask}
+    monkeypatch.setattr(era5.io, 'open', auxiliary_access(aux))
+    with pytest.raises(ValueError, match='binary integer'):
+        processor(spec)(raw, {}, spec)
 
 
 @pytest.mark.parametrize("dry_run", [False, True])
 def test_unwritten_product_is_not_reopened(tmp_path, monkeypatch, dry_run):
-    creation = SimpleNamespace(coverage={"written": False, "dry_run": dry_run})
+    creation = SimpleNamespace(coverage={"written": False, "dry_run": dry_run,
+                                         "conformance_passed": dry_run})
+    raw = xr.Dataset()
+    closed = []
+    raw.set_close(lambda: closed.append(True))
+    monkeypatch.setattr(pipeline, "load_source_contract", lambda *args: {})
+    monkeypatch.setattr(pipeline, "load_target_contract", lambda *args: object())
+    monkeypatch.setattr(pipeline, "validate_source", lambda *args: None)
+    monkeypatch.setattr(pipeline, "read_source", lambda *args: raw)
+    monkeypatch.setattr(pipeline, "assemble_standard_dataset", lambda product, spec: product)
+    monkeypatch.setattr(pipeline, "write_product", lambda *args, **kwargs: creation)
 
     def unexpected(*args, **kwargs):
         pytest.fail("Unwritten product must not be opened")
 
     monkeypatch.setattr(pipeline, "validate_zarr", unexpected)
-    assert pipeline.validate_product(tmp_path / "absent.zarr", object(), creation) is creation
-
-
-@pytest.mark.parametrize("quick_passed", [False, True])
-def test_cli_uses_final_validation_status(monkeypatch, quick_passed):
-    report = SimpleNamespace(
-        coverage={"written": True, "conformance_passed": True},
-        quick_passed=quick_passed, to_dict=lambda: {},
-    )
-    monkeypatch.setattr(pipeline, "build_dataset", lambda *args, **kwargs: report)
-    args = ["--processor", "oras5"]
-    for option in ("source-config", "target-spec", "source", "destination", "mean-nc", "std-nc", "mask-nc"):
-        args.extend([f"--{option}", f"/test/{option}"])
-    assert pipeline.main(args) == (0 if quick_passed else 1)
+    result = pipeline.build_zarr({}, "target", tmp_path / "source", tmp_path / "result",
+                                    process=lambda *args: xr.Dataset(), dry_run=dry_run)
+    assert result.creation_report is creation
+    assert not result.quick_passed and closed == [True]
 
 
 @pytest.mark.parametrize("actual_units", ["K", "degC", None])
@@ -285,16 +275,262 @@ def test_source_validation_does_not_treat_optional_mapping_as_required(tmp_path)
     assert pipeline.validate_source(path, description)["files_checked"] == 1
 
 
-def test_invalid_source_stops_before_processing_or_writing(tmp_path, monkeypatch):
-    description = {"name": "source", "format": "netcdf", "layout": {}, "example": "input.nc"}
-    monkeypatch.setattr(pipeline, "load_source_contract", lambda *args: description)
-    monkeypatch.setattr(pipeline, "load_target_contract", lambda *args: object())
+def varying_input(inputs):
+    spec, raw, aux = inputs
+    raw = raw.copy(deep=True)
+    raw.data.values[:] = np.arange(1, 7, dtype='f4').reshape(1, 1, 2, 3)
+    raw['source_land'] = xr.DataArray(
+        [[0, .4, .5], [.6, 1, 0]], dims=('lat', 'lon'),
+        coords={'lat': raw.lat, 'lon': raw.lon})
+    from pipelines.dataset.preparation import generate_mask
+    aux = {**aux, 'mask': generate_mask(raw, spec, 'source_land', .5)}
+    return spec, raw, aux
 
-    def unexpected(*args, **kwargs):
-        pytest.fail("Invalid input must stop before read/process/write")
 
-    monkeypatch.setattr(pipeline, "read_source", unexpected)
-    monkeypatch.setattr(pipeline, "write_product", unexpected)
-    with pytest.raises(FileNotFoundError, match="Source path does not exist"):
-        pipeline.build_dataset(description, object(), tmp_path / "missing", tmp_path / "output",
-                               process=unexpected)
+@pytest.mark.parametrize('provided', [(), ('mean',), ('std',), ('mean', 'std')])
+def test_optional_statistics_in_preprocessed_domain(inputs, monkeypatch, provided):
+    spec, raw, aux = varying_input(inputs)
+    # This numerical recipe test has no fixed production statistics.
+    spec = replace(spec, product=replace(spec.product, effective_statistics={}))
+    monkeypatch.setattr(era5.io, 'open', auxiliary_access(aux))
+    module = era5 if spec.product.product_id.startswith('era5') else oras5
+    process = module.process
+    channels = list(spec.product.channel_names)
+    expected = reference_physical(raw, spec)
+    result = process(raw, {}, spec,
+                     mean_path='external' if 'mean' in provided else None,
+                     std_path='external' if 'std' in provided else None, mask_path='external')
+    channels = list(spec.product.channel_names)
+    mean = (aux['mean'].sel(channel=channels) if 'mean' in provided else
+            expected.astype('float64').mean(('time', 'lat', 'lon'), skipna=True).astype('float32'))
+    std = (aux['std'].sel(channel=channels) if 'std' in provided else
+           expected.astype('float64').std(('time', 'lat', 'lon'), skipna=True, ddof=0).astype('float32'))
+    np.testing.assert_array_equal(result['mean'], mean)
+    np.testing.assert_array_equal(result['std'], std)
+    np.testing.assert_array_equal(result.data, ((expected - mean) / std).astype('float16'))
+    np.testing.assert_array_equal(result['mask'].sel(mask_channel='land_mask'),
+                                  [[0, 0, 1], [1, 1, 0]])
+    np.testing.assert_array_equal(result['mask'].sum('mask_channel'), 1)
+
+
+@pytest.mark.parametrize('fault', ['extra', 'missing', 'duplicate'])
+def test_generated_statistics_reject_inexact_time_coverage(inputs, fault):
+    spec, raw, aux = varying_input(inputs)
+    if fault == 'missing':
+        raw = raw.isel(time=slice(0, 0))
+    else:
+        other = raw if fault == 'duplicate' else raw.assign_coords(time=raw.time + np.timedelta64(6, 'h'))
+        raw = xr.concat([raw, other], dim='time')
+    process = era5.process if spec.product.product_id.startswith('era5') else oras5.process
+    with pytest.raises(ValueError, match='time coverage'):
+        process(raw, {}, spec)
+
+
+@pytest.mark.parametrize('fault', ['constant', 'all_nan'])
+def test_invalid_generated_statistics_fail(inputs, monkeypatch, fault):
+    spec, raw, aux = inputs
+    raw = raw.copy(deep=True)
+    if fault == 'all_nan':
+        raw.data.values[:] = np.nan
+    process = era5.process if spec.product.product_id.startswith('era5') else oras5.process
+    module = era5 if spec.product.product_id.startswith('era5') else oras5
+    monkeypatch.setattr(module.io, 'open', auxiliary_access(aux))
+    with pytest.raises(ValueError, match='finite|positive'):
+        process(raw, {}, spec, mask_path='external')
+
+
+@pytest.mark.parametrize('fault', ['unspecified', 'no_threshold', 'nan', 'out_of_range', 'bad_threshold'])
+def test_generated_mask_rejects_ambiguous_or_invalid_input(inputs, fault):
+    from pipelines.dataset.preparation import generate_mask
+    spec, raw, aux = varying_input(inputs)
+    variable, threshold = 'source_land', .5
+    if fault == 'unspecified':
+        variable = None
+    elif fault == 'no_threshold':
+        threshold = None
+    elif fault == 'nan':
+        raw.source_land.values[0, 0] = np.nan
+    elif fault == 'out_of_range':
+        raw.source_land.values[0, 0] = 2
+    else:
+        threshold = float('nan')
+    with pytest.raises(ValueError):
+        generate_mask(raw, spec, variable, threshold)
+
+
+def test_binary_and_packed_source_mask(inputs):
+    from pipelines.dataset.preparation import generate_mask
+    spec, raw, aux = inputs
+    land = aux['mask'].sel(mask_channel='land_mask', drop=True)
+    raw = raw.assign(source_land=land)
+    result = generate_mask(raw, spec, 'source_land', None)
+    xr.testing.assert_equal(result, aux['mask'])
+    channel = str(raw.channel.values[0])
+    raw.data.loc[{'channel': channel}] = 0
+    packed = generate_mask(raw, spec, channel, None)
+    assert not packed.sel(mask_channel='land_mask').values.any()
+
+
+def test_guard_rejects_generated_statistics_against_fixed_target(inputs, tmp_path, monkeypatch):
+    spec, raw, aux = varying_input(inputs)
+    first = spec.product.channels[0]
+    product = replace(spec.product, effective_statistics={first.variable: (0., 1.)})
+    spec = replace(spec, product=product)
+    module = era5 if spec.product.product_id.startswith('era5') else oras5
+    process = module.process
+    monkeypatch.setattr(pipeline, 'validate_source', lambda *args: None)
+    monkeypatch.setattr(pipeline, 'read_source', lambda *args: raw)
+    monkeypatch.setattr(module.io, 'open', auxiliary_access(aux))
+    report = pipeline.build_zarr(
+        {'name': 'packed', 'layout': {}, 'example': 'input.nc'}, spec,
+        tmp_path / 'input.nc', tmp_path / 'result.zarr', dry_run=True,
+        process=partial(process, mask_path='external'))
+    assert not report.coverage['conformance_passed'] and not report.coverage['written']
+    assert report.failures[0]['stage'] == 'input_check'
+
+
+def test_framework_passes_both_contracts_without_adapting_product(tmp_path, monkeypatch):
+    import json
+    from pipelines.dataset.reports import ValidationReport
+    raw = xr.Dataset()
+    closed = []
+    raw.set_close(lambda: closed.append(True))
+    target = object()
+    description = {'name': 'input'}
+    # Incomplete data must be rejected without repairing or mutating it.
+    product = xr.Dataset({'data': ('sample', np.array([1.5], dtype='float64'))})
+    before = product.copy(deep=True)
+    monkeypatch.setattr(pipeline, 'load_source_contract', lambda *args: description)
+    monkeypatch.setattr(pipeline, 'load_target_contract', lambda *args: target)
+    monkeypatch.setattr(pipeline, 'validate_source', lambda *args: None)
+    monkeypatch.setattr(pipeline, 'read_source', lambda *args: raw)
+    def process(dataset, source_contract, target_contract):
+        assert dataset is raw and source_contract is description and target_contract is target
+        return product
+    def create(dataset, *args, **kwargs):
+        assert dataset is product
+        report = ValidationReport('sample', 'create', {'checked_scope': 'input'},
+                                  coverage={'conformance_passed': False, 'written': False})
+        report.add('layout.data', 'fail', 'standard_conformance')
+        return report
+    monkeypatch.setattr(pipeline, 'create_zarr', create)
+    result = pipeline.build_zarr({}, target, tmp_path/'input', tmp_path/'output', process=process)
+    assert closed == [True] and result.failures[0]['stage'] == 'assemble'
+    xr.testing.assert_identical(product, before)
+    json.dumps(result.to_dict())
+
+
+def test_build_writes_and_validates_real_product_after_closing_source(published, tmp_path, monkeypatch):
+    import json
+    path, spec = published
+    events = []
+    opened = xr.open_zarr(path, chunks=None, mask_and_scale=False)
+    close = opened.close
+    def close_source():
+        close()
+        events.append('closed')
+    # Use a real lazy Dataset, while recording resource/validation ordering.
+    from contextlib import contextmanager
+    @contextmanager
+    def reader(*args):
+        try:
+            yield opened
+        finally:
+            close_source()
+    monkeypatch.setattr(pipeline, 'read_source', reader)
+    validate = pipeline.validate_zarr
+    def validate_after_close(*args, **kwargs):
+        assert events == ['closed']
+        return validate(*args, **kwargs)
+    monkeypatch.setattr(pipeline, 'validate_zarr', validate_after_close)
+    target = tmp_path/'built.zarr'
+    result = pipeline.build_zarr(
+        {'name': 'published', 'format': 'zarr', 'layout': {}, 'example': path.name},
+        spec, path, target, process=lambda raw, source, target: raw)
+    assert result.coverage['written'] and result.quick_passed, result.to_dict()
+    assert result.creation_report is not None and result.validation_report is not None
+    json.dumps(result.to_dict(), allow_nan=False)
+
+
+@pytest.mark.parametrize('fault', ['write', 'validate'])
+def test_build_failure_preserves_partial_output_and_resources(tmp_path, monkeypatch, fault):
+    from pipelines.dataset.reports import ValidationReport
+    closed = []
+    raw = xr.Dataset()
+    raw.set_close(lambda: closed.append(True))
+    monkeypatch.setattr(pipeline, 'load_source_contract', lambda *args: {})
+    monkeypatch.setattr(pipeline, 'load_target_contract', lambda *args: object())
+    monkeypatch.setattr(pipeline, 'validate_source', lambda *args: None)
+    monkeypatch.setattr(pipeline, 'read_source', lambda *args: raw)
+    target = tmp_path/'partial.zarr'
+    def write(*args, **kwargs):
+        target.mkdir()
+        result = ValidationReport('sample', 'create', {'checked_scope': 'input'},
+                                  coverage={'written': fault != 'write', 'conformance_passed': True})
+        result.add('create.write', 'fail' if fault == 'write' else 'pass', 'data_integrity')
+        return result
+    def validate(*args, **kwargs):
+        assert fault != 'write' and closed == [True]
+        raise OSError('readback failed')
+    monkeypatch.setattr(pipeline, 'assemble_standard_dataset', lambda product, spec: product)
+    monkeypatch.setattr(pipeline, 'write_product', write)
+    monkeypatch.setattr(pipeline, 'validate_zarr', validate)
+    result = pipeline.build_zarr({}, object(), tmp_path/'input', target,
+                                    process=lambda *args: xr.Dataset())
+    assert target.is_dir() and closed == [True]
+    assert not result.quick_passed and result.failures[0]['stage'] == fault
+
+
+def test_build_import_does_not_load_examples():
+    import subprocess
+    import sys
+    code = "from pipelines.dataset import build_zarr, BuildReport; import sys; assert not any(n == 'examples' or n.startswith('examples.') for n in sys.modules)"
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_generated_statistics_ignore_partial_nan_with_known_values(inputs, monkeypatch):
+    spec, raw, aux = varying_input(inputs)
+    spec = replace(spec, product=replace(spec.product, effective_statistics={}))
+    raw.data.values[:, :, 0, 0] = np.nan
+    module = era5 if spec.product.product_id.startswith('era5') else oras5
+    process = module.process
+    monkeypatch.setattr(module.io, 'open', auxiliary_access(aux))
+    result = process(raw, {}, spec, mask_path='external')
+    # Every unchanged channel contains [NaN, 2, 3, 4, 5, 6].
+    channel = spec.product.channels[0].name
+    assert float(result['mean'].sel(channel=channel)) == 4.
+    np.testing.assert_allclose(result['std'].sel(channel=channel), np.sqrt(2), rtol=1e-7)
+    assert np.isnan(result.data.sel(channel=channel).values[0, 0, 0])
+
+
+def test_concrete_recipe_requires_external_mask(inputs):
+    spec, raw, _ = varying_input(inputs)
+    process = era5.process if spec.product.product_id.startswith('era5') else oras5.process
+    with pytest.raises(ValueError, match='requires an external mask_path'):
+        process(raw, {}, spec)
+
+
+def test_pipeline_adds_standard_metadata_without_mutating_processed_arrays(inputs, tmp_path, monkeypatch):
+    spec, raw, aux = inputs
+    monkeypatch.setattr(era5.io, 'open', auxiliary_access(aux))
+    processed = processor(spec)(raw, {}, spec)
+    before = processed.copy(deep=True)
+    assert not processed.attrs and 'channel_info' not in processed.channel.attrs
+    monkeypatch.setattr(pipeline, 'validate_source', lambda *args: None)
+    monkeypatch.setattr(pipeline, 'read_source', lambda *args: raw)
+    create = pipeline.create_zarr
+    def check_assembled(product, *args, **kwargs):
+        assert product.attrs['dataset_id'] == spec.dataset_id
+        assert 'channel_info' in product.channel.attrs
+        for name in ('data', 'mean', 'std', 'mask'):
+            np.testing.assert_array_equal(product[name], before[name])
+        return create(product, *args, **kwargs)
+    monkeypatch.setattr(pipeline, 'create_zarr', check_assembled)
+    result = pipeline.build_zarr(
+        {'name': 'packed', 'layout': {}, 'example': 'input.nc'}, spec,
+        tmp_path/'input.nc', tmp_path/'result.zarr',
+        process=lambda *args: processed, dry_run=True)
+    assert result.coverage['conformance_passed'], result.to_dict()
+    assert result.stages['assemble'] == 'passed'
+    xr.testing.assert_identical(processed, before)
