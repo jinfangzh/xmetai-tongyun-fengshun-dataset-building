@@ -1,13 +1,15 @@
 """Raw file access and generic dataset declaration helpers."""
 
-from ._layout import get_description, get_layout, profile_layout, source_config
-from .dataset import open, open_dataset
+from ._layout import get_description, get_layout, source_config
+from .dataset import open
+from .combination import combine_partitions
+from .records import FileRecord
 
 __all__ = [
     "get_description",
     "get_layout",
     "open",
-    "open_dataset",
-    "profile_layout",
+    "FileRecord",
+    "combine_partitions",
     "source_config",
 ]

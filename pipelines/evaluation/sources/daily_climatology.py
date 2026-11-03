@@ -15,7 +15,6 @@ import xarray as xr
 from datakit import io
 from datakit.evaluation.contracts import DataIndex, DataRequest
 from datakit.evaluation.errors import DecodeError, DiscoveryError
-from datakit.io.backends.files import NETCDF_READ_LOCK
 from datakit.schema.mapping import (
     DatasetMapping,
     VarSpec,
@@ -466,7 +465,7 @@ class DailyClimatologySource:
             )
         path = Path(index.available[0]["path"])
         try:
-            with NETCDF_READ_LOCK, io.open(path).read() as dataset:
+            with io.open(path).read() as dataset:
                 payload = self.sampler.apply(
                     dataset,
                     request.variables,

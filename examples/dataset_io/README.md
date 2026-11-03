@@ -1,55 +1,25 @@
-# YAML 数据集访问示例
+# 数据集 IO 示例
 
-`io_example.py` 用一个 `main()` 展示加载 YAML、定位源文件、读取、可选标准化与导出。
-具体数据集声明在仓库根目录的 [config/data_sources](../../config/data_sources/)，
-本目录不再维护数据源 Python 包装模块，评测流程也不导入示例代码。
+[example_fuxi.py](example_fuxi.py) 展示按 YAML 描述读取 FuXi 集合预报、选择源变量并导出 NetCDF。
 
-## 运行
-
-在仓库根目录安装所需依赖，例如 `.[io,parallel]`，并替换真实数据路径：
+修改 `main()` 中的输入、输出路径、变量名和筛选条件后，在仓库根目录运行：
 
 ```bash
-python -m examples.dataset_io.io_example --help
-
-python -m examples.dataset_io.io_example \
-  --config config/data_sources/forecast_fuxi_ensemble.yaml \
-  --path /data/fuxi --init-time 2025-01-01 --lead-time 6 12 --member 0 \
-  --variables z500 t2m --output /data/output/fuxi.nc
-
-python -m examples.dataset_io.io_example \
-  --config config/data_sources/observation_diamond_flat.yaml \
-  --path /data/stations --time 2025-01-01T06:00 --variables tp
-
-python -m examples.dataset_io.io_example \
-  --config config/data_sources/climatology_cra.yaml \
-  --path /data/cra_climatology --cycle-time 010106
+python -m examples.dataset_io.example_fuxi
 ```
 
-省略 `--variables` 时保留源变量、单位和缺测值。提供变量时才显式调用标准化；
-配置没有 mapping 时仅按原始变量名选择。按目录组织的数据需要选择条件或显式传入
-`--all-files`。日序气候态为单个 NetCDF，直接使用 `io.open(path).read()`，不需要本示例的 YAML 配置。时间条件遵循源时区，
-不隐式转成 UTC。控制台显示结构；`--output` 在关闭源之前写出结果，拒绝覆盖已有输出。
+默认读取成员 0 的 6、12 小时预报，对应文件为：
 
-## Python 调用
-
-```python
-from datakit import io
-from datakit.schema.mapping import normalize_dataset
-
-config = "config/data_sources/forecast_fuxi_ensemble.yaml"
-description = io.get_description(config)
-source = io.open_dataset(
-    "/data/fuxi", description,
-    selection={"init_time": ["2025-01-01"], "lead_time": [6, 12]},
-)
-with source.read() as raw:
-    standard = normalize_dataset(raw, ["z500", "t2m"], description).load()
+```text
+/data/fuxi/20250101/member_0/001.nc
+/data/fuxi/20250101/member_0/002.nc
 ```
 
-也可以用 `io.source_config("forecast_fuxi_ensemble")` 定位随项目分发的 YAML；
-支持通过 `directory=` 显式选择配置目录。自定义 YAML 直接传路径即可，不需要注册 Python 模块。
+读取保留源变量名、单位和缺测值，不执行变量映射或数值换算。
+数据在源关闭之前写出，拒绝覆盖已有输出；可以直接在 IDE 中进入 `main()` 调试。
+多文件读取需要安装 `parallel` extra，例如 `pip install -e '.[io,parallel]'`。
 
-通用声明与后端边界见 [配置说明](../../config/README.md)。
-评测的单位口径、GRIB 指标变量筛选、日历对齐、平滑和插值仍由
-`pipelines/evaluation/sources/` 显式组织。产品验收 YAML 位于
-`config/dataset_specs/`，与这里的源数据访问声明用途不同。
+数据描述位于 [config/data_sources](../../config/data_sources/)。
+`io.source_config(name)` 定位项目内的 YAML，也可直接向 `io.open()` 传入自定义 YAML 路径。
+单文件访问使用 `io.open(path)`。接口说明见 [通用 IO](../../datakit/io/README.md)，
+声明规则见 [配置说明](../../config/README.md)。

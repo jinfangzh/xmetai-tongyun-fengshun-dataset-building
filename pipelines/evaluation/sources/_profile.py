@@ -95,3 +95,11 @@ def build_profile(description):
         case_insensitive=mapping.case_insensitive,
         **contract,
     )
+
+
+def profile_layout(profile) -> dict:
+    """Return independent IO rules, applying the selected forecast step."""
+    layout = deepcopy(dict(profile.io_layout))
+    if "hours_per_index" in layout.get("lead_time", {}):
+        layout["lead_time"]["hours_per_index"] = profile.step_hours
+    return layout

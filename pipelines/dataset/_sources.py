@@ -18,11 +18,7 @@ def _source(source, source_config=None, selection=None, read_options=None):
         opened = source
         owned = False
     else:
-        access = (
-            io.open_dataset(source, source_config)
-            if source_config is not None
-            else io.open(source)
-        )
+        access = io.open(source, source_config)
         options.setdefault("all_files", True)
         options.setdefault("selection", selection)
         opened = access.read(**options)

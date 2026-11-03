@@ -7,13 +7,14 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
+from datakit import io
 from datakit.evaluation.contracts import (
     DataIndex,
     DataKind,
     DataRequest,
 )
 from datakit.evaluation.errors import DecodeError, DiscoveryError, TyphoonDataError
-from datakit.io import get_description, open_dataset, source_config
+from datakit.io import get_description, source_config
 
 from ._bundle import build_bundle
 
@@ -27,7 +28,7 @@ def read_babj_analyses(path) -> tuple[str, str, dict[_dt.datetime, dict[str, flo
     """
     try:
         description = get_description(source_config("observation_babj"))
-        with open_dataset(path, description).read(all_files=True) as dataset:
+        with io.open(path, description).read(all_files=True) as dataset:
             tcname = str(dataset.tcname.values[0])
             tcid = str(dataset.storm.values[0])
             names = description["format"]["columns"]
@@ -71,7 +72,7 @@ class BabjCatalog:
                 source_id=request.source_id, available=[self.babj_dir], ambiguous=[]
             )
         try:
-            records = open_dataset(
+            records = io.open(
                 self.babj_dir, source_config("observation_babj")
             ).discover(all_files=True)
             files = [record.path for record in records]

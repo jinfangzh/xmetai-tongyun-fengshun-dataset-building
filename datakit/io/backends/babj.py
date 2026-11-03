@@ -3,6 +3,8 @@
 import numpy as np
 import xarray as xr
 
+from ._writing import check_outputs, staged_output, write_mode
+
 
 def read_records(records, description, **options):
     """读取已发现的文件记录，供统一入口和逐文件处理复用。"""
@@ -50,6 +52,7 @@ def read_records(records, description, **options):
 
 def write(dataset, root, description, **options):
     """按当前布局写出 Dataset，返回输出文件路径列表。"""
+    mode = write_mode(options)
     if options:
         raise TypeError(f"BABJ write options are not supported: {sorted(options)}")
     file_format = description["format"]
@@ -59,8 +62,7 @@ def write(dataset, root, description, **options):
             "BABJ output requires source headers retained by read()"
         )
     paths = [root / record["filename"] for record in manifest]
-    if len(set(paths)) != len(paths) or any(p.exists() for p in paths):
-        raise FileExistsError("BABJ output filenames collide or already exist")
+    check_outputs(paths, mode)
     rows = [
         np.column_stack(
             [
@@ -71,8 +73,8 @@ def write(dataset, root, description, **options):
         for item in manifest
     ]
     for path, item, values in zip(paths, manifest, rows):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("x", encoding=file_format["encoding"]) as stream:
-            stream.writelines(item["headers"])
-            np.savetxt(stream, values, fmt="%.17g")
+        with staged_output(path, mode) as staged:
+            with staged.open("x", encoding=file_format["encoding"]) as stream:
+                stream.writelines(item["headers"])
+                np.savetxt(stream, values, fmt="%.17g")
     return list(map(str, paths))

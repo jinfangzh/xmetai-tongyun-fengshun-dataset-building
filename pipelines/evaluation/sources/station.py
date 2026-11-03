@@ -10,12 +10,21 @@ from datakit import io
 from datakit.evaluation.contracts import DataBundle, DataIndex, DataRequest
 from datakit.evaluation.errors import DecodeError, DiscoveryError
 from datakit.io import get_layout, source_config
-from datakit.io.backends.file_collection import Record as GriddedRecord
-from datakit.io.backends.station_tables import parse_station_file_time
 from datakit.schema.semantics import DataKind, TemporalKind
 
 from ._bundle import build_bundle
 from .dataset_profiles import DIAMOND_STATION_MAPPING
+
+
+def _station_record(path, descriptions):
+    if isinstance(path, io.FileRecord):
+        return path
+    for description in descriptions:
+        try:
+            return io.open(path, description).discover(all_files=True)[0]
+        except FileNotFoundError:
+            continue
+    raise ValueError(f"无法解析观测文件时间: {path}")
 
 
 class DiamondStationCatalog:
@@ -28,7 +37,7 @@ class DiamondStationCatalog:
         )
 
     def file_time(self, path) -> datetime:
-        return parse_station_file_time(path)
+        return _station_record(path, self._layouts).fields["time"]
 
     def discover(self, request: DataRequest) -> DataIndex:
         for description in self._layouts:
@@ -38,7 +47,7 @@ class DiamondStationCatalog:
                 )
                 return DataIndex(
                     source_id=request.source_id,
-                    available=[record.path for record in records],
+                    available=records,
                 )
             except FileNotFoundError:
                 continue
@@ -53,18 +62,15 @@ class DiamondStationReader:
         self.version = version
         self.station_whitelist = station_whitelist
         self._layout = get_layout(source_config("observation_diamond"))
+        self._layouts = (get_layout(source_config("observation_diamond_flat")), self._layout)
 
     def read(self, request: DataRequest, index: DataIndex) -> DataBundle:
-        from datakit.io.backends.station_tables import read_records as read_tables
-
         if not index.available:
             raise DecodeError("No files in index", source_id=request.source_id)
         records = []
         for path in index.available:
             try:
-                records.append(
-                    GriddedRecord(Path(path), {"time": parse_station_file_time(path)})
-                )
+                records.append(_station_record(path, self._layouts))
             except ValueError:
                 continue
         if not records:
@@ -72,12 +78,12 @@ class DiamondStationReader:
                 "No valid station data parsed", source_id=request.source_id
             )
         try:
-            dataset = read_tables(
-                records,
-                self._layout,
+            with io.open(records[0].path.parent, self._layout).read(
+                records=records,
                 stations=self.station_whitelist,
                 fixed_station_metadata=True,
-            )
+            ) as raw:
+                dataset = raw.load()
         except Exception as exc:
             raise DecodeError(str(exc), source_id=request.source_id, cause=exc) from exc
         dataset = dataset.assign_coords(station_id=("station", dataset.station.values))
@@ -86,7 +92,7 @@ class DiamondStationReader:
         return build_bundle(
             request,
             dataset,
-            [str(path) for path in index.available],
+            [str(record.path) for record in records],
             self.source_id,
             self.version,
             kind=DataKind.STATION_OBSERVATION,

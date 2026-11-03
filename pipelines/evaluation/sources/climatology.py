@@ -9,13 +9,12 @@ from datakit import io
 from datakit.evaluation.contracts import DataBundle, DataIndex, DataRequest
 from datakit.evaluation.errors import DecodeError, DiscoveryError
 from datakit.io import get_layout, source_config
-from datakit.io.backends.file_collection import Record as GriddedRecord
-from datakit.io.backends.file_collection import read_records
-from datakit.schema.mapping import DatasetMapping, VarSpec, apply_dataset_mapping
+from datakit.schema.mapping import DatasetMapping, VarSpec
 from datakit.schema.semantics import DataKind, TemporalKind
 
 from ._bundle import build_bundle
 from .dataset_profiles import CLIMATOLOGY_MAPPING, DEFAULT_GRIB_FILTERS
+from .gridded import read_mapped_records
 
 
 class ClimatologyCatalog:
@@ -89,17 +88,13 @@ class ClimatologyReader:
             variables={name: VarSpec() for name in request.variables},
         )
 
-        def prepare(dataset, names):
-            return apply_dataset_mapping(dataset, mapping, names or request.variables)
-
         records = [
-            GriddedRecord(path, {"valid_time": moment})
+            io.FileRecord(path, {"valid_time": moment})
             for moment, path in index.available[0].items()
         ]
-        options = {"load_partitions": True, "prepare": prepare}
+        options = {"engine": self.engine}
         if self.engine == "cfgrib":
             options.update(
-                engine="cfgrib",
                 variable_filters={
                     name: self.grib_filters[name]
                     for name in request.variables
@@ -107,7 +102,9 @@ class ClimatologyReader:
                 },
             )
         try:
-            dataset = read_records(records, {"structure": {}}, **options)
+            dataset = read_mapped_records(
+                records, None, mapping, request.variables, **options
+            )
         except Exception as exc:
             raise DecodeError(str(exc), source_id=request.source_id, cause=exc) from exc
         return build_bundle(

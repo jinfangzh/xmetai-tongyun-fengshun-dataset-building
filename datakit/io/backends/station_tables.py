@@ -6,13 +6,12 @@ Diamond 输出：(time, station)，包含经纬度、海拔、降水和额外数
 写回需要读取时保留的文件头、站点顺序等元数据。
 """
 
-from datetime import datetime
-from pathlib import Path
 
 import numpy as np
 import xarray as xr
 
 from .._layout import templates
+from ._writing import check_outputs, staged_output, write_mode
 
 
 def read_records(records, description, **options):
@@ -102,6 +101,7 @@ def read_records(records, description, **options):
 
 def write(dataset, root, description, **options):
     """按当前布局写出 Dataset，返回输出文件路径列表。"""
+    mode = write_mode(options)
     if options:
         raise TypeError(
             f"Text table write options are not supported: {sorted(options)}"
@@ -120,8 +120,8 @@ def write(dataset, root, description, **options):
     axis = "cycle_time" if probability else "time"
     for record in manifest:
         path = root / patterns[0][1].render(record["fields"])
-        if path.exists() or path in planned_paths:
-            raise FileExistsError(path)
+        if path in planned_paths:
+            raise ValueError(f"Output paths collide: {path}")
         part = dataset.sel(
             {axis: record["fields"][axis], "station": record["stations"]}
         )
@@ -133,28 +133,15 @@ def write(dataset, root, description, **options):
         rows = np.column_stack([record["stations"], values])
         planned_paths.add(path)
         plans.append((path, record["headers"], rows))
+    check_outputs([path for path, *_ in plans], mode)
     for path, headers, rows in plans:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open(
-            "x", encoding=description.get("format", {}).get("encoding", "gbk")
-        ) as stream:
-            stream.writelines(headers)
-            np.savetxt(stream, rows, fmt="%.17g")
+        with staged_output(path, mode) as staged:
+            with staged.open(
+                "x", encoding=description.get("format", {}).get("encoding", "gbk")
+            ) as stream:
+                stream.writelines(headers)
+                np.savetxt(stream, rows, fmt="%.17g")
     return [str(p) for p, *_ in plans]
-
-
-def parse_station_file_time(path: Path) -> datetime:
-    """解析 Diamond 站点文件的观测时刻。
-
-    支持两种命名：``station_dir/YYYYMMDDHH.000`` 与 ``station_dir/YYYYMMDD/HH.000``。
-    """
-    path = Path(path)
-    name = path.stem
-    if len(name) == 10 and name.isdigit():
-        return datetime.strptime(name, "%Y%m%d%H")  # noqa: DTZ007 -- preserve source wall time
-    if len(name) == 2 and name.isdigit() and path.parent.name.isdigit():
-        return datetime.strptime(path.parent.name + name, "%Y%m%d%H")  # noqa: DTZ007 -- preserve source wall time
-    raise ValueError(f"无法解析观测文件时间: {path}")
 
 
 def _station_collection(tables):

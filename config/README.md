@@ -44,9 +44,8 @@
 
 ## 使用与分发
 
-通用 API 使用 `datakit.io.get_description()`、`open_dataset()` 和
-`datakit.schema.mapping.normalize_dataset()`，完整示例见
-[io_example](../examples/dataset_io/README.md)。基础 IO 与评测不依赖 examples 模块。
+通用 API 使用 `datakit.io.get_description()`、`open()`，完整示例见
+[example_fuxi](../examples/dataset_io/README.md)。基础 IO 与评测不依赖 examples 模块。
 
 安装包携带这些访问声明，安装到 `config/data_sources/` 数据目录。
 `io.source_config(name)` 在源码目录或安装数据目录定位文件；也可指定 `directory=`。

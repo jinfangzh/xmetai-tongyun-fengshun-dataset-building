@@ -70,7 +70,7 @@ FuXi、Fengqing、CRA、Diamond 等具有特定文件组织的数据，入口位
 Zarr 或 NumPy；需要按数据集规则发现、筛选和组合文件时，通过 YAML 声明调用通用 IO。
 
 变量映射可以省略，也可以只描述部分变量。映射说明源变量与标准变量的对应关系，
-不是读取白名单。原始读取保留源变量名和单位，显式调用 `normalize_dataset()` 时才执行映射和换算。
+不是读取白名单。原始读取保留源变量名和单位，显式调用 `apply_dataset_mapping()` 时才执行映射和换算。
 
 单位换算、对数变换和归一化的顺序由具体任务明确安排。制作与反归一化导出应使用匹配的
 通道、统计量和处理约定；产品结构与校验标准见 [`config/dataset_specs`](config/dataset_specs)。
@@ -105,7 +105,7 @@ Zarr 或 NumPy；需要按数据集规则发现、筛选和组合文件时，通
 | 具体数据集制作与处理任务 | `examples/dataset_building/`、`examples/dataset_processing/` |
 | 评测配置与运行入口 | `examples/evaluation/` |
 | 某个数据集怎么组织、怎么读 | `config/data_sources/` |
-| 数据接入的完整调用示例 | `examples/dataset_io/io_example.py` |
+| 数据接入的完整调用示例 | `examples/dataset_io/example_fuxi.py` |
 | 数据怎么转换、插值或归一化 | `datakit/transforms/` |
 | 数据产品应满足什么标准 | `datakit/schema/` |
 | 数据检查算法 | `datakit/validation/` |
@@ -161,10 +161,10 @@ python -c "import datakit; print('datakit import OK')"
 
 ```python
 from datakit import io
-from datakit.schema.mapping import normalize_dataset
+from datakit.schema.mapping import apply_dataset_mapping, load_mapping
 
 description = io.get_description("config/data_sources/forecast_fuxi_ensemble.yaml")
-source = io.open_dataset(
+source = io.open(
     "/data/fuxi",
     description,
     selection={
@@ -176,7 +176,7 @@ source = io.open_dataset(
 records = source.discover()  # 只定位文件，不读取数据正文。
 
 with source.read() as raw:
-    standard = normalize_dataset(raw, ["z500", "t2m"], description)
+    standard = apply_dataset_mapping(raw, load_mapping(description), ["z500", "t2m"])
     result = standard.load()
 ```
 

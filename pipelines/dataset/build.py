@@ -34,7 +34,7 @@ def read_source(source_path, description):
     File discovery/format checks belong to IO. A complete semantic source-data
     check is not yet available from the current source-layout declarations.
     """
-    return io.open_dataset(source_path, description).read(all_files=True)
+    return io.open(source_path, description).read(all_files=True)
 
 
 def validate_source(source_path, source_config):
@@ -51,7 +51,7 @@ def validate_source(source_path, source_config):
     if not path.exists():
         raise FileNotFoundError(f"Source path does not exist: {path}")
     description = io.get_description(source_config)
-    access = io.open_dataset(path, description)
+    access = io.open(path, description)
     records = access.discover(all_files=True)
     if not records:
         raise ValueError(f"No files match source declaration: {path}")

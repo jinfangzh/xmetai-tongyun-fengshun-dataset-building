@@ -3,19 +3,77 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+
+import xarray as xr
 
 from datakit import io
 from datakit.evaluation.contracts import DataBundle, DataIndex, DataRequest
 from datakit.evaluation.errors import DecodeError, DiscoveryError
-from datakit.io import profile_layout
-from datakit.io.backends.file_collection import Record as GriddedRecord
-from datakit.io.backends.file_collection import read_records
 from datakit.schema.mapping import apply_dataset_mapping, profile_mapping
 
 from ._bundle import build_bundle
-from ._profile import DatasetProfile
+from ._profile import DatasetProfile, profile_layout
+
+
+class GriddedRecord(io.FileRecord):
+    """Evaluation time/member conveniences over a public IO file record."""
+
+    @property
+    def init_time(self):
+        return self.fields.get("init_time", self.fields.get("time"))
+
+    @property
+    def lead_time(self):
+        return self.fields.get("lead_time")
+
+    @property
+    def member(self):
+        return self.fields.get("member")
+
+    @property
+    def valid_time(self):
+        moment = self.init_time
+        return (
+            moment + timedelta(hours=float(self.lead_time))
+            if moment is not None and self.lead_time is not None
+            else moment
+        )
+
+
+def read_mapped_records(
+    records,
+    description,
+    mapping,
+    variables,
+    *,
+    engine="netcdf",
+    engine_fallback=None,
+    variable_filters=None,
+):
+    """Map and load each evaluation partition before combining coordinates.
+
+    GRIB fields are decoded separately because their source coordinates and
+    names may conflict until the evaluation mapping has been applied.
+    """
+    frames = []
+    for record in records:
+        fields = []
+        for name, filters in (variable_filters or {None: None}).items():
+            options = {"engine_fallback": engine_fallback}
+            if engine != "netcdf":
+                options["engine"] = engine
+            if filters is not None:
+                options["backend_kwargs"] = {"filter_by_keys": filters}
+            with io.open(record.path).read(**options) as raw:
+                field = apply_dataset_mapping(raw, mapping, [name] if name else variables)
+                if field is not None:
+                    fields.append(field.load())
+        if not fields:
+            raise ValueError(f"No requested variables found in {record.path}")
+        frames.append(fields[0] if len(fields) == 1 else xr.merge(fields))
+    return io.combine_partitions(records, frames, description)
 
 
 class GriddedCatalog:
@@ -34,7 +92,10 @@ class GriddedCatalog:
         if request.lead_times:
             selection["lead_time"] = request.lead_times
         try:
-            records = self.source.discover(selection=selection)
+            records = [
+                GriddedRecord(record.path, record.fields)
+                for record in self.source.discover(selection=selection)
+            ]
         except (FileNotFoundError, ValueError) as exc:
             raise DiscoveryError(str(exc), source_id=request.source_id) from exc
         groups = self.layout.groups_for(request.variables)
@@ -97,19 +158,12 @@ class GriddedReader:
                 for record in records
             ]
 
-        def prepare(dataset, names):
-            return apply_dataset_mapping(
-                dataset, self.mapping, names or request.variables
-            )
-
         options = {
-            "prepare": prepare,
-            "load_partitions": True,
+            "engine": self.layout.engine,
             "engine_fallback": self.layout.engine_fallback,
         }
         if self.layout.engine == "cfgrib":
             options.update(
-                engine="cfgrib",
                 variable_filters={
                     name: self.layout.grib_filters[name]
                     for name in request.variables
@@ -117,7 +171,9 @@ class GriddedReader:
                 },
             )
         try:
-            combined = read_records(records, description, **options)
+            combined = read_mapped_records(
+                records, description, self.mapping, request.variables, **options
+            )
         except Exception as exc:
             raise DecodeError(str(exc), source_id=request.source_id, cause=exc) from exc
         return build_bundle(

@@ -53,4 +53,4 @@ notes: |-
 
   一个 NetCDF 文件对应一个预报时效；默认时效 = 文件编号 × 6 小时。
   起报时间、预报时效和集合成员从路径获取，NC 内部变量名与单位在读取时保留。
-  下面的 mapping 仅在显式调用 normalize() 时应用。
+  下面的 mapping 仅在显式调用 apply_dataset_mapping() 时应用。

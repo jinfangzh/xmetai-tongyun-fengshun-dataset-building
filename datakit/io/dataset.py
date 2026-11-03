@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import xarray as xr
 
-from ._layout import get_layout, load_layout, profile_layout, templates
+from ._layout import get_layout, templates
 from .backends import file_collection, files
+from .backends._writing import reading
 from .backends.file_collection import discover
 from .backends.files import as_dataset, local_path
+from .records import FileRecord
 
 
 class _DatasetAccess:
@@ -26,7 +29,7 @@ class _DatasetAccess:
     def __init__(
         self,
         path: str | Path,
-        layout: str | Path | Mapping[str, Any] | None = None,
+        description: str | Path | Mapping[str, Any] | None = None,
         *,
         selection: Mapping[str, Any] | None = None,
         backend=None,
@@ -34,11 +37,12 @@ class _DatasetAccess:
         self.path = local_path(path)
         self.selection = dict(selection or {})
         self.layout = (
-            load_layout(layout)
-            if layout is not None
+            get_layout(description)
+            if description is not None
             else {
                 "name": "xarray_dataset",
                 "layout": {},
+                "example": self.path.name,
             }
         )
         if backend is not None:
@@ -57,8 +61,23 @@ class _DatasetAccess:
         else:
             self._backend = file_collection if self.layout["layout"] else files
 
-    def _records(self, selection, all_files):
+    def _records(self, selection, all_files, records=None):
         selection = {**self.selection, **(selection or {})}
+        if records is not None:
+            records = list(records)
+            if not records:
+                raise ValueError("records must not be empty")
+            paths = set()
+            for record in records:
+                if not isinstance(record, FileRecord):
+                    raise TypeError("records must contain FileRecord objects")
+                if not record.path.exists():
+                    raise FileNotFoundError(record.path)
+                path = record.path.resolve()
+                if path in paths:
+                    raise ValueError(f"Duplicate file record: {record.path}")
+                paths.add(path)
+            return records, selection
         if self.layout["layout"] and not selection and not all_files:
             raise ValueError(
                 "Provide selection for a described dataset, or explicitly use all_files=True"
@@ -103,7 +122,7 @@ class _DatasetAccess:
         return records
 
     def read(
-        self, *, selection=None, all_files=False, load=False, **open_options: Any
+        self, *, records=None, selection=None, all_files=False, load=False, **open_options: Any
     ) -> xr.Dataset:
         """Locate selected files and return a closeable Dataset, lazy where supported.
 
@@ -111,18 +130,24 @@ class _DatasetAccess:
         member. Datetimes may be datetime objects or ISO strings. Described
         collections require selection or explicit all_files=True.
         """
-        records, selection = self._records(selection, all_files)
-        dataset = self._backend.read_records(records, self.layout, **open_options)
+        explicit = records is not None
+        records, selection = self._records(selection, all_files, records)
+        backend = self._record_backend(records)
+        stack = ExitStack()
         try:
-            selected = dataset.sel(selection) if selection else dataset
-            if selected is not dataset:
-                selected.set_close(dataset.close)
+            stack.enter_context(reading(record.path for record in records))
+            dataset = backend.read_records(records, self.layout, **open_options)
+            stack.callback(dataset.close)
+            selected = dataset.sel(selection) if selection else dataset.copy(deep=False)
+            if explicit and any(size == 0 for size in selected.sizes.values()):
+                raise KeyError("selection matches no data in the supplied records")
+            selected.set_close(stack.close)
             if load:
                 selected.load()
-                dataset.close()
+                selected.close()
             return selected
         except BaseException:
-            dataset.close()
+            stack.close()
             raise
 
     def write(self, dataset: xr.Dataset, **write_options: Any) -> list[str]:
@@ -131,17 +156,29 @@ class _DatasetAccess:
         dataset = as_dataset(dataset)
         return self._backend.write(dataset, self.path, self.layout, **write_options)
 
-    def iter_datasets(self, *, selection=None, all_files=False, **open_options):
+    def _record_backend(self, records):
+        if self._backend is files and (len(records) > 1 or any(record.fields for record in records)):
+            return file_collection
+        return self._backend
+
+    def iter_datasets(self, *, records=None, selection=None, all_files=False, **open_options):
         """Visit one physical file at a time; each context closes before advancing.
 
         These are file partitions, not complete forecast/member groups. A yielded
         lazy Dataset must be consumed or loaded before advancing the iterator.
         """
-        records, selection = self._records(selection, all_files)
+        explicit = records is not None
+        records, selection = self._records(selection, all_files, records)
+        backend = self._record_backend(records)
+        matched = {
+            name: set() for name, value in selection.items() if not isinstance(value, slice)
+        }
+        yielded = False
         for record in records:
-            with self._backend.read_records(
-                [record], self.layout, **open_options
-            ) as ds:
+            with (
+                reading([record.path]),
+                backend.read_records([record], self.layout, **open_options) as ds,
+            ):
                 # A partition may contain no requested internal labels.
                 indexers = {}
                 for name, value in selection.items():
@@ -151,15 +188,29 @@ class _DatasetAccess:
                     values = value if isinstance(value, (list, tuple)) else [value]
                     index = ds.indexes[name]
                     positions = index.get_indexer(values)
+                    matched[name].update(i for i, position in enumerate(positions) if position >= 0)
                     indexers[name] = index[positions[positions >= 0]]
                 selected = ds.sel(indexers) if indexers else ds
                 if all(selected.sizes.values()):
+                    for name in matched.keys() - ds.indexes.keys():
+                        value = selection[name]
+                        count = len(value) if isinstance(value, (list, tuple)) else 1
+                        matched[name].update(range(count))
+                    yielded = True
                     yield selected
+        if explicit:
+            for name, positions in matched.items():
+                value = selection[name]
+                count = len(value) if isinstance(value, (list, tuple)) else 1
+                if len(positions) != count:
+                    raise KeyError(f"selection for {name!r} is not covered by the supplied records")
+            if not yielded:
+                raise KeyError("selection matches no data in the supplied records")
 
 
 def open(
     path: str | Path,
-    layout: str | Path | Mapping[str, Any] | None = None,
+    description: str | Path | Mapping[str, Any] | None = None,
     *,
     selection: Mapping[str, Any] | None = None,
     backend=None,
@@ -167,20 +218,10 @@ def open(
     """Configure dataset access without discovering or opening data files.
 
     Call read() or iter_datasets() on the returned object to access data.
-    ``layout`` is an explicit mapping or YAML path, never a dataset name.
+    ``description`` is a mapping or YAML path; only file rules are applied.
     Specialized callers may supply a backend with read_records() and write().
     """
-    return _DatasetAccess(path, layout, selection=selection, backend=backend)
+    return _DatasetAccess(path, description, selection=selection, backend=backend)
 
 
-__all__ = ["open", "open_dataset"]
-
-
-def open_dataset(
-    path, description, *, selection=None, profile=None, layout=None, backend=None
-):
-    if layout is not None and profile is not None:
-        raise ValueError("Pass layout or profile, not both")
-    if layout is None:
-        layout = get_layout(description) if profile is None else profile_layout(profile)
-    return open(path, layout, selection=selection, backend=backend)
+__all__ = ["open"]

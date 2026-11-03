@@ -15,7 +15,7 @@ def source_config(name: str, *, directory: str | Path | None = None) -> Path:
     """Locate a named YAML declaration in an explicit, checkout or installed directory.
 
     Arbitrary external YAML paths can be passed directly to get_description() and
-    open_dataset(). This helper only locates the shipped dataset declarations.
+    open(). This helper only locates the shipped dataset declarations.
     """
     if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
         raise ValueError("Source configuration name must be a simple filename stem")
@@ -225,11 +225,3 @@ def templates(
         for group, name in names.items()
         if name is not None
     ]
-
-
-def profile_layout(profile) -> dict:
-    """Return independent IO rules, applying the selected forecast step."""
-    layout = deepcopy(dict(profile.io_layout))
-    if "hours_per_index" in layout.get("lead_time", {}):
-        layout["lead_time"]["hours_per_index"] = profile.step_hours
-    return layout

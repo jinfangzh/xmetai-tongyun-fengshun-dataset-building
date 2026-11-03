@@ -60,4 +60,4 @@ notes: |-
   文件名包含起报时间和预报小时数；006 是 6 小时，不是文件序号。
   PLEVELS 与 SURFACE 在同一起报、时效下合并；成员来自文件内部的 member 维度。
   level、time、dtime 仅在明确为单例记录维度时压缩；不猜测或插值空间坐标。
-  read() 保留源变量和单位，下面的 mapping 只由 normalize() 显式应用。
+  read() 保留源变量和单位，下面的 mapping 只由 apply_dataset_mapping() 显式应用。

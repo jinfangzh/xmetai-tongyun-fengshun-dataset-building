@@ -12,6 +12,8 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
+from ._writing import reading, staged_output, write_mode
+
 PathLike = str | Path
 
 _FORMAT_BY_SUFFIX = {
@@ -86,26 +88,61 @@ def as_dataset(data: xr.Dataset | xr.DataArray, *, name: str = "data") -> xr.Dat
     )
 
 
-# Shared by eager NetCDF/HDF5 consumers to serialize open/read/close.
-NETCDF_READ_LOCK = threading.Lock()
+class _NetCDFLock:
+    """One reentrant lock per process, including deserialized lazy arrays."""
+
+    def __init__(self):
+        self._lock = threading.RLock()
+
+    def acquire(self, *args, **kwargs):
+        return self._lock.acquire(*args, **kwargs)
+
+    def release(self):
+        self._lock.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *args):
+        self.release()
+
+    def __reduce__(self):
+        return (_netcdf_lock, ())
+
+
+def _netcdf_lock():
+    return _NETCDF_LOCK
+
+
+_NETCDF_LOCK = _NetCDFLock()
+
+
+def _reset_netcdf_lock():
+    _NETCDF_LOCK._lock = threading.RLock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_netcdf_lock)
 
 
 def write_file(dataset, path, options):
     options = dict(options)
-    if options.get("compute") is False:
-        raise ValueError("write() executes the write; compute=False is not supported")
-    mode = options.pop("mode", None)
-    if path.exists() and mode not in {"w", "a", "r+"}:
-        raise FileExistsError(f"Refusing to overwrite an existing output: {path}")
-    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = write_mode(options)
     format_name = normalize_format(options.pop("format", None) or infer_format(path))
+    with staged_output(path, mode) as staged:
+        _write_file(dataset, staged, format_name, options)
+    return str(path)
+
+
+def _write_file(dataset, path, format_name, options):
     if format_name == "zarr":
         chunks = options.pop("chunks", None)
         if chunks is not None:
             dataset = dataset.chunk(chunks)
-        dataset.to_zarr(str(path), mode=mode or "w-", **options)
+        dataset.to_zarr(str(path), mode="w-", **options)
     elif format_name == "netcdf":
-        dataset.to_netcdf(path, mode=mode or "w", **options)
+        dataset.to_netcdf(path, mode="w", **options)
     elif format_name == "grib":
         from cfgrib.xarray_to_grib import to_grib
 
@@ -123,7 +160,6 @@ def write_file(dataset, path, options):
             np.save(stream, dataset[next(iter(dataset.data_vars))].values)
     else:
         raise ValueError(f"No lossless Xarray writer configured for {path.suffix!r}")
-    return str(path)
 
 
 def _detect_format(path) -> str:
@@ -153,59 +189,29 @@ def _detect_format(path) -> str:
 @contextmanager
 def open_xarray(path, **options):
     """Resource owner for public Xarray/NumPy backends; no product rules."""
-    format_name = normalize_format(options.pop("format", None) or _detect_format(path))
-    fallback = options.pop("engine_fallback", None)
-    variable = options.pop("variable", None)
-    variable_filters = options.pop("variable_filters", None)
-    prepare = options.pop("prepare", None)
-    if variable_filters:
-        with ExitStack() as stack:
-            frames = []
-            for name, filters in variable_filters.items():
-                field_options = dict(options)
-                field_options["backend_kwargs"] = {
-                    **field_options.get("backend_kwargs", {}),
-                    "filter_by_keys": filters,
-                }
-                dataset = stack.enter_context(
-                    open_xarray(
-                        path,
-                        format=format_name,
-                        engine_fallback=fallback,
-                        **field_options,
-                    )
-                )
-                if prepare is not None:
-                    dataset = prepare(dataset, [name])
-                if dataset is not None:
-                    frames.append(dataset)
-            if not frames:
-                raise ValueError("No requested GRIB variables could be decoded")
-            yield frames[0] if len(frames) == 1 else xr.merge(frames)
-        return
-    if format_name == "numpy":
-        key = options.pop("key", variable)
-        options.setdefault("name", key or "data")
-        yield read_numpy(path, key=key, **options).to_dataset()
-        return
-    if format_name == "zarr":
-        options.setdefault("chunks", None)
-        context = xr.open_zarr(str(path), **options)
-    elif format_name == "netcdf":
-        context = open_netcdf_dataset(path, engine_fallback=fallback, **options)
-    elif format_name == "grib":
-        options.setdefault("engine", "cfgrib")
-        context = xr.open_dataset(path, **options)
-    else:
-        raise ValueError(f"Unsupported format: {format_name}")
-    with context as dataset:
-        if prepare is not None:
-            dataset = prepare(dataset, None)
-            if dataset is None:
-                raise ValueError("No requested variables found in file")
-        if variable is not None:
-            dataset = dataset[[variable]]
-        yield dataset
+    with reading([path]):
+        format_name = normalize_format(options.pop("format", None) or _detect_format(path))
+        fallback = options.pop("engine_fallback", None)
+        variable = options.pop("variable", None)
+        if format_name == "numpy":
+            key = options.pop("key", variable)
+            options.setdefault("name", key or "data")
+            yield read_numpy(path, key=key, **options).to_dataset()
+            return
+        if format_name == "zarr":
+            options.setdefault("chunks", None)
+            context = xr.open_zarr(str(path), **options)
+        elif format_name == "netcdf":
+            context = open_netcdf_dataset(path, engine_fallback=fallback, **options)
+        elif format_name == "grib":
+            options.setdefault("engine", "cfgrib")
+            context = xr.open_dataset(path, **options)
+        else:
+            raise ValueError(f"Unsupported format: {format_name}")
+        with context as dataset:
+            if variable is not None:
+                dataset = dataset[[variable]]
+            yield dataset
 
 
 @contextmanager
@@ -223,13 +229,7 @@ def open_netcdf_dataset(
     with local.open("rb") as stream:
         zipped = stream.read(4) == b"PK\x03\x04"
     if not zipped:
-        try:
-            dataset = xr.open_dataset(local, **kwargs)
-        except OSError:
-            if not fallback:
-                raise
-            dataset = xr.open_dataset(local, **{**kwargs, "engine": fallback})
-        with dataset:
+        with _netcdf_dataset(local, kwargs, fallback) as dataset:
             yield dataset
         return
 
@@ -242,8 +242,27 @@ def open_netcdf_dataset(
                 )
             archive.extract(members[0], temporary)
             extracted = Path(temporary) / members[0]
-        with xr.open_dataset(extracted, **kwargs) as dataset:
+        with _netcdf_dataset(extracted, kwargs, fallback) as dataset:
             yield dataset
+
+
+@contextmanager
+def _netcdf_dataset(path, options, fallback):
+    options = dict(options)
+    if options.pop("lock", None) is not None or "lock" in (options.get("backend_kwargs") or {}):
+        raise ValueError("NetCDF read locking is managed by IO; do not supply lock")
+    with _NETCDF_LOCK:
+        try:
+            dataset = xr.open_dataset(path, lock=_NETCDF_LOCK, **options)
+        except OSError:
+            if not fallback:
+                raise
+            dataset = xr.open_dataset(path, lock=_NETCDF_LOCK, **{**options, "engine": fallback})
+    try:
+        yield dataset
+    finally:
+        with _NETCDF_LOCK:
+            dataset.close()
 
 
 def read_numpy(
