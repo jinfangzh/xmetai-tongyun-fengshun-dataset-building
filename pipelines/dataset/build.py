@@ -98,11 +98,6 @@ def validate_source(source_path, source_config):
             "scope": "layout, readability, coordinate uniqueness, declared packed structure and present-variable units"}
 
 
-def write_product(product, destination, spec, *, dry_run=False):
-    """Stage 4: check conformance and write without overwriting existing data."""
-    return create_zarr(product, destination, spec, dry_run=dry_run)
-
-
 def build_zarr(
     source_config,
     target_spec,
@@ -172,7 +167,7 @@ def build_zarr(
 
         # 底层将内存检查与写出合并；只调用一次，避免重复扫描。
         try:
-            creation = write_product(product, target, spec, dry_run=dry_run)
+            creation = create_zarr(product, target, spec, dry_run=dry_run)
         except (ValueError, OSError) as exc:
             report.fail("create", str(exc), exc)
             return report

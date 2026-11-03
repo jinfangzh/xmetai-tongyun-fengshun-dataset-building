@@ -82,7 +82,7 @@ python -m examples.dataset_building.example_validate_era5
 也可直接调用：
 
 ```python
-from pipelines.dataset import append_zarr, validate_zarr, compare_zarr
+from pipelines.dataset import append_zarr, validate_zarr
 
 # 已有 B + 后续 A → 独立 C，内部执行完整校验。
 report = append_zarr(
@@ -96,9 +96,6 @@ report = validate_zarr(
     mode="full", output="/data/reports/validation.yaml",
 )
 print(report.release_passed)
-
-comparison = compare_zarr(source="/data/reference.zarr", target="/data/C.zarr")
-print(comparison["equal"])
 ```
 
 追加按 B + A 生成独立 C，保留输入且拒绝已有输出，写出后内部执行 full 校验。契约须描述完整 BA，并准备相应外部附件及发布证据。追加期间输入保持静止，预留完整 BA 的额外磁盘空间；内存至少容纳一个时间片及静态附件。

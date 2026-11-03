@@ -1,18 +1,16 @@
 # 数据集任务接口
 
-通过 Python API 组织构建、追加、验收和比较任务：
+通过 Python API 组织构建、追加和验收任务：
 
 ```python
-from pipelines.dataset import build_zarr, create_zarr, append_zarr, validate_zarr, compare_zarr
+from pipelines.dataset import build_zarr, append_zarr, validate_zarr
 ```
 
 | 接口 | 职责 | 返回值 |
 | --- | --- | --- |
 | `build_zarr` | 调用自定义加工、组装标准元数据、检查并写出、回读校验 | `BuildReport` |
-| `create_zarr` | 检查已准备好的 Dataset，通过后写出 | `ValidationReport` |
 | `append_zarr` | 将已有 B 与后续 A 合并到独立 C，完整校验 C | `ValidationReport` |
 | `validate_zarr` | 按契约验收已有产物 | `ValidationReport` |
-| `compare_zarr` | 对齐完整标签集合后比较数值 | 差异字典 |
 
 运行与自定义加工示例见 [dataset_building](../../examples/dataset_building/README.md)。
 
@@ -60,18 +58,11 @@ build_zarr(source_config, target_spec, source_path, destination, *, process, dry
 - 已知契约、源检查和组装失败记录到报告；加工异常及意外程序错误继续抛出。
 - 拒绝已有输出及输入输出路径重叠。写出或校验失败保留可能存在的目录，不自动删除。
 
-## 创建
+## 构建内部的检查与写出
 
-```python
-report = create_zarr(
-    dataset, "/data/new/product.zarr", "/path/to/target.yaml",
-    dry_run=True, output="/data/reports/create.json",
-)
-```
+`create.py` 是 build 的内部实现，不通过包顶层导出独立创建接口。它检查已准备好的 Dataset 的结构、坐标、属性、统计量、掩膜及数值质量，通过后按契约的分块和 Zarr 版本写出；不加工数据或补充业务元数据。
 
-输入为已经准备好的 `xr.Dataset`，spec 接受 `DatasetSchema` 或 YAML 路径。创建不加工数据或补充业务元数据；结构、坐标、属性、统计量、掩膜及数值质量通过检查后，按契约的分块和 Zarr 版本写出。
-
-`coverage["conformance_passed"]` 表示输入符合性，`coverage["written"]` 表示写出成功。创建拒绝覆盖，不修改或关闭调用方的 Dataset。该检查不代替物理存储、外部附件及发布证据的验收；创建报告的可选文件输出使用 JSON。
+内部检查报告中的 `conformance_passed` 表示输入符合性，`written` 表示写出成功，由 `BuildReport.creation_report` 保留。检查与写出只执行一次；拒绝覆盖，不修改或关闭调用方的 Dataset。对外使用 `build_zarr`，设置 `dry_run=True` 可仅执行加工和内存检查。
 
 ## 时间追加
 
@@ -125,16 +116,6 @@ report = validate_zarr(
 )
 ```
 
-## 比较
-
-```python
-difference = compare_zarr(source, target, mapping=None, atol=0, rtol=0)
-```
-
-允许坐标和变量维度顺序不同，要求数组、维度和坐标标签集合完整对应，不取交集。mapping 字典或 YAML 可显式指定 `dimensions/variables/channels` 的名称映射。
-
-比较不换算单位，不核对任意属性、存储编码或分块。对应 NaN 视为相等，默认精确比较，可设置容差。`memory_budget_mib` 限制逻辑块，不能约束后端解码缓冲区；数值比较复用 `datakit.validation.comparison.compare_datasets`。
-
 ## 文件职责
 
 | 模块 | 职责 |
@@ -144,7 +125,6 @@ difference = compare_zarr(source, target, mapping=None, atol=0, rtol=0)
 | `create.py` | 内存产物检查与写出 |
 | `append.py` | B + A 写入独立 C 并完整校验 |
 | `validate.py` | 落盘验收、扫描、资源预算及中断 |
-| `compare.py` | 输入读取、名称映射与比较调用 |
 | `_sources.py` | 共享读取及资源所有权管理 |
 | `reports.py` | 任务报告、检查结果汇总及报告路径保护 |
 | `configuration.py` | 运行规格、外部配置、证据引用及摘要验证 |
@@ -153,4 +133,4 @@ difference = compare_zarr(source, target, mapping=None, atol=0, rtol=0)
 
 `generate_mask` 是自定义加工可主动使用的工具：二值 1 表示陆地、0 表示海洋；比例值按显式阈值生成陆地 mask，海洋取互补。当前 ERA5/ORAS5 示例均读取外部 mask。
 
-`old/` 中的功能仍由包根目录延迟导出，具体调用入口见 [处理示例](../../examples/dataset_processing/README.md) 和 [保留的制作流程](../../examples/dataset_building/history/README.md)。核心构建、创建、追加、验收和比较操作不导入这些实现。
+`old/` 中的功能仍由包根目录延迟导出，具体调用入口见 [处理示例](../../examples/dataset_processing/README.md) 和 [保留的制作流程](../../examples/dataset_building/history/README.md)。核心构建、追加和验收操作不导入这些实现。

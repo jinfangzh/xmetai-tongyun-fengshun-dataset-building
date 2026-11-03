@@ -5,10 +5,8 @@ from importlib import import_module
 __all__ = [
     "build_zarr",
     "BuildReport",
-    "create_zarr",
     "append_zarr",
     "validate_zarr",
-    "compare_zarr",
     "convert_to_zarr",
     "extract_zarr_to_netcdf",
     "extract_raw_truth_day",
@@ -21,10 +19,8 @@ __all__ = [
 _MODULES = {
     "build_zarr": ".build",
     "BuildReport": ".reports",
-    "create_zarr": ".create",
     "append_zarr": ".append",
     "validate_zarr": ".validate",
-    "compare_zarr": ".compare",
     "convert_to_zarr": ".old.conversion",
     "extract_zarr_to_netcdf": ".old.conversion",
     "extract_raw_truth_day": ".old.raw_truth",
