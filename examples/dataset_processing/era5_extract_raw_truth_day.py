@@ -14,7 +14,7 @@ from datetime import date
 from pathlib import Path
 
 from pipelines.dataset import extract_raw_truth_day
-from datakit.schema import DYNAMIC_CHANNELS
+from pipelines.dataset.old.raw_truth import DYNAMIC_CHANNELS
 
 
 def parse_day(value: str) -> date:

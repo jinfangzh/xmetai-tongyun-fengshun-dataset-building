@@ -9,13 +9,16 @@ BABJ 报文用北京时（init 的北京时 = init + 8h）。
 
 from __future__ import annotations
 
+import datetime as _dt
 import math
 from datetime import datetime
 from pathlib import Path
-from typing import Mapping, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import xarray as xr
+
+from datakit.evaluation.metrics.track_error import along_cross_track, great_circle_km
 
 #: 同经度上 1° 纬度的大圆距离（r=6371 km），用来手算预期路径误差
 KM_PER_DEG = math.pi * 6371.0 / 180.0
@@ -141,3 +144,77 @@ def write_babj(
                     )
                 ).encode("ascii")
             )
+
+
+# Frozen legacy comparison helper; production uses paired batches and TrackError.
+def match_errors(
+    track: Dict[str, List[float]],
+    leads_hours: Sequence[float],
+    init_utc: _dt.datetime,
+    babj: Dict[_dt.datetime, Dict[str, float]],
+    tz_shift: float = 8.0,
+) -> List[Dict[str, float]]:
+    """诊断路径对 babj 实况逐时效配对求误差。
+
+    track: diagnose_track 的输出；babj: read_babj_analyses 的字典
+    （北京时）。验证时刻(北京时) = init_utc + 时效 + tz_shift。
+    无实况记录的时效各项为 NaN（路径/强度误差保持 NaN，不外推）。
+
+    首个**配对成功**的时效 ``at_km``/``ct_km`` 为空——没有前一个实况位置就
+    无从定向；实况有缺口时，缺的是那个时效，不是固定 ``lead_h=6``。
+    """
+    prev_babj: Optional[Tuple[float, float]] = None
+    rows: List[Dict[str, float]] = []
+    for k, tau in enumerate(leads_hours):
+        v_bjt = init_utc + _dt.timedelta(hours=float(tau) + tz_shift)
+        ob = babj.get(v_bjt)
+        f_lat, f_lon = track["lat"][k], track["lon"][k]
+        f_p, f_v = track["pmin_hpa"][k], track["vmax"][k]
+        if ob is None:
+            rows.append(
+                {
+                    "lead_h": float(tau),
+                    "valid_bjt": str(v_bjt),
+                    "fcst_lat": f_lat,
+                    "fcst_lon": f_lon,
+                    "fcst_pmin_hpa": f_p,
+                    "fcst_vmax_ms": f_v,
+                    "obs_lat": np.nan,
+                    "obs_lon": np.nan,
+                    "obs_pmin_hpa": np.nan,
+                    "obs_vmax_ms": np.nan,
+                    "track_err_km": np.nan,
+                    "at_km": np.nan,
+                    "ct_km": np.nan,
+                    "wind_err_ms": np.nan,
+                    "pmin_err_hpa": np.nan,
+                }
+            )
+            continue
+        o_lat, o_lon = ob["lat"], ob["lon"]
+        err = float(great_circle_km(f_lat, f_lon, o_lat, o_lon))
+        if prev_babj is None:  # 首个配对时次
+            at = ct = float("nan")
+        else:
+            at, ct = along_cross_track(prev_babj[0], prev_babj[1], o_lat, o_lon, f_lat, f_lon)
+        rows.append(
+            {
+                "lead_h": float(tau),
+                "valid_bjt": str(v_bjt),
+                "fcst_lat": f_lat,
+                "fcst_lon": f_lon,
+                "fcst_pmin_hpa": f_p,
+                "fcst_vmax_ms": f_v,
+                "obs_lat": o_lat,
+                "obs_lon": o_lon,
+                "obs_pmin_hpa": ob["pmin_hpa"],
+                "obs_vmax_ms": ob["vmax_ms"],
+                "track_err_km": err,
+                "at_km": at,
+                "ct_km": ct,
+                "wind_err_ms": f_v - ob["vmax_ms"] if np.isfinite(f_v) else float("nan"),
+                "pmin_err_hpa": f_p - ob["pmin_hpa"],
+            }
+        )
+        prev_babj = (o_lat, o_lon)
+    return rows

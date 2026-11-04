@@ -9,7 +9,7 @@ import pytest
 import xarray as xr
 
 spec = importlib.util.spec_from_file_location(
-    "era5_nc_to_zarr", Path(__file__).parents[1] / "examples/dataset_building/era5_nc_to_zarr.py"
+    "era5_nc_to_zarr", Path(__file__).parents[1] / "examples/dataset_building/history/era5_nc_to_zarr.py"
 )
 assert spec is not None and spec.loader is not None
 era5_nc_to_zarr = importlib.util.module_from_spec(spec)
@@ -82,11 +82,6 @@ def _patch_args(
     monkeypatch.setattr(era5_nc_to_zarr, "get_args", lambda: args)
 
 
-def _patch_read_zarr(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _reader(path: Path):
-        return xr.open_zarr(path, consolidated=False).load()
-
-    monkeypatch.setattr(era5_nc_to_zarr, "read_zarr", _reader)
 
 
 def test_nc_to_zarr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -110,7 +105,6 @@ def test_nc_to_zarr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     )
     _write_stats(mean_path, std_path, mask_path, channels)
     _patch_args(monkeypatch, source, destination, mean_path, std_path, mask_path)
-    _patch_read_zarr(monkeypatch)
 
     era5_nc_to_zarr.main()
 
@@ -157,7 +151,6 @@ def test_nc_to_zarr_6h_radiation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     _patch_args(
         monkeypatch, source, destination, mean_path, std_path, mask_path, accumulation_hours=6.0
     )
-    _patch_read_zarr(monkeypatch)
 
     era5_nc_to_zarr.main()
 
@@ -200,7 +193,6 @@ def test_nc_to_zarr_with_filter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         start_date="2025-01-02",
         end_date="2025-01-03",
     )
-    _patch_read_zarr(monkeypatch)
 
     era5_nc_to_zarr.main()
 

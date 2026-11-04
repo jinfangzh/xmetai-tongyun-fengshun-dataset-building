@@ -17,7 +17,7 @@ from pathlib import Path
 
 import xarray as xr
 
-from datakit.io import read_netcdf, write_netcdf
+from datakit import io as dataset_io
 from datakit.transforms import (
     preprocess_channel_units,
 )
@@ -111,7 +111,7 @@ def main() -> None:
         if destination.exists() and not args.overwrite:
             raise FileExistsError(f"Output exists: {destination}")
 
-        opened = read_netcdf(path)
+        opened = dataset_io.open(path).read(load=True)
         try:
             data = _select_data_array(opened, args.variable).astype("float32")
             data = preprocess_channel_units(
@@ -131,7 +131,7 @@ def main() -> None:
             encoding = {
                 args.variable: {"zlib": True, "complevel": 4, "shuffle": True, "dtype": "float32"}
             }
-            write_netcdf(ds, destination, engine="netcdf4", format="NETCDF4", encoding=encoding)
+            dataset_io.open(destination).write(ds, mode="w", engine="netcdf4", format="NETCDF4", encoding=encoding)[0]
             converted += 1
             print(f"[{index:03d}/{len(files):03d}] {path.name} -> {destination.name}")
         finally:

@@ -85,6 +85,65 @@ def invert_affine(
     )
 
 
+def apply_scale(obj: XarrayObject, *, factors: Mapping[str, float]) -> XarrayObject:
+    """Multiply explicitly named variables by finite real factors, without clipping.
+
+    Unselected variables and attributes are retained; units are not inferred or
+    updated. Unknown variable names are errors. Main-data computation stays lazy.
+    """
+    if not isinstance(obj, (xr.Dataset, xr.DataArray)):
+        raise TypeError("obj must be an xarray Dataset or DataArray")
+    coefficients = {name: _finite_scalar(value, name=f"factors[{name!r}]")
+                    for name, value in factors.items()}
+    available = set(obj.data_vars) if isinstance(obj, xr.Dataset) else {obj.name}
+    missing = set(coefficients) - available
+    if missing:
+        raise ValueError(f"Unknown scale variables: {sorted(missing)}")
+
+    def scale(array):
+        if array.name not in coefficients:
+            return array.copy(deep=False)
+        _require_data_array(array, name=str(array.name))
+        if array.dtype.kind == "c":
+            raise TypeError("apply_scale requires real-valued data")
+        result = array * coefficients[array.name]
+        result.attrs = dict(array.attrs)
+        return result
+
+    return obj.map(scale, keep_attrs=True) if isinstance(obj, xr.Dataset) else scale(obj)
+
+
+def apply_log1p(obj: XarrayObject, *, variables: Collection[str]) -> XarrayObject:
+    """Apply log1p to explicit variables, with no implicit selection or clipping.
+
+    NaNs propagate. Values <= -1 raise; this domain check scans selected data
+    (including lazy arrays). Coordinates and attributes are retained unchanged.
+    """
+    if not isinstance(obj, (xr.Dataset, xr.DataArray)):
+        raise TypeError("obj must be an xarray Dataset or DataArray")
+    if isinstance(variables, str):
+        raise TypeError("variables must be a collection of variable names")
+    selected = set(variables)
+    available = set(obj.data_vars) if isinstance(obj, xr.Dataset) else {obj.name}
+    missing = selected - available
+    if missing:
+        raise ValueError(f"Unknown log1p variables: {sorted(missing)}")
+
+    def transform(array):
+        if array.name not in selected:
+            return array.copy(deep=False)
+        _require_data_array(array, name=str(array.name))
+        if array.dtype.kind == "c":
+            raise TypeError("apply_log1p requires real-valued data")
+        if bool((array <= -1).any().compute().item()):
+            raise ValueError(f"log1p requires values > -1: {array.name}")
+        result = np.log1p(array)
+        result.attrs = dict(array.attrs)
+        return result
+
+    return obj.map(transform, keep_attrs=True) if isinstance(obj, xr.Dataset) else transform(obj)
+
+
 def rescale_units(
     obj: XarrayObject,
     *,

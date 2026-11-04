@@ -33,7 +33,7 @@ from datakit.evaluation.metrics.base import (
     MetricRequirements,
     MetricState,
     ProductType,
-    single_variable,
+    field_values,
 )
 
 DEFAULT_MAX_WAVENUMBER = 30
@@ -56,22 +56,9 @@ def _lat_from_batch(batch: EvaluationBatch, metric_name: str) -> np.ndarray:
     )
 
 
-def _values(data: Any) -> np.ndarray:
-    if isinstance(data, xr.DataArray):
-        return np.asarray(data.values, dtype="f8")
-    if isinstance(data, xr.Dataset):
-        return np.asarray(single_variable(data, "输入").values, dtype="f8")
-    if hasattr(data, "payload"):
-        payload = data.payload
-        if isinstance(payload, xr.Dataset):
-            payload = single_variable(payload, "输入")
-        return np.asarray(payload.values, dtype="f8")
-    return np.asarray(data, dtype="f8")
-
-
 def _weights(batch: EvaluationBatch, shape) -> np.ndarray:
     if batch.weights is not None:
-        weights = _values(batch.weights)
+        weights = field_values(batch.weights)
         if weights.shape == shape:
             return weights
     return np.ones(shape, dtype="f8")
@@ -138,9 +125,9 @@ class ActivityRatio(Metric):
                 "活跃度比是距平统计，需要气候态参考（请为流程配置 reference 数据源）",
                 variable=self.name,
             )
-        forecast = _values(batch.forecast)
-        observation = _values(batch.observation)
-        climatology = _values(batch.reference)
+        forecast = field_values(batch.forecast)
+        observation = field_values(batch.observation)
+        climatology = field_values(batch.reference)
         if not (forecast.shape == observation.shape == climatology.shape):
             raise MetricError(
                 f"形状不一致：fc={forecast.shape}, obs={observation.shape}, "
@@ -152,7 +139,7 @@ class ActivityRatio(Metric):
         )
         weights = _weights(batch, forecast.shape)
         if batch.valid_mask is not None:
-            mask = _values(batch.valid_mask)
+            mask = field_values(batch.valid_mask)
             if mask.shape == keep.shape:
                 keep = keep & mask.astype(bool)
         return forecast - climatology, observation - climatology, weights, keep
@@ -312,8 +299,8 @@ class PowerSpectrum(Metric):
         return values[..., ::-1, :]
 
     def _spectra(self, batch: EvaluationBatch):
-        forecast = self._oriented(_values(batch.forecast), batch.forecast)
-        observation = self._oriented(_values(batch.observation), batch.observation)
+        forecast = self._oriented(field_values(batch.forecast), batch.forecast)
+        observation = self._oriented(field_values(batch.observation), batch.observation)
         forecast_grid = (
             forecast.reshape(-1, forecast.shape[-1]) if forecast.ndim > 2 else forecast
         )
@@ -466,8 +453,8 @@ class ZonalSpectrum(Metric):
         return _lat_from_batch(batch, "zonal_spectrum")
 
     def _spectra(self, batch: EvaluationBatch):
-        forecast = _values(batch.forecast)
-        observation = _values(batch.observation)
+        forecast = field_values(batch.forecast)
+        observation = field_values(batch.observation)
         if forecast.ndim < 2 or observation.ndim < 2:
             raise MetricError(
                 f"纬向谱需要 (..., lat, lon) 场，实际 ndim={forecast.ndim}",
@@ -761,8 +748,8 @@ class SphericalBands(Metric):
         )
 
     def _band_powers(self, batch: EvaluationBatch):
-        forecast = _values(batch.forecast)
-        observation = _values(batch.observation)
+        forecast = field_values(batch.forecast)
+        observation = field_values(batch.observation)
         if forecast.ndim < 2 or observation.ndim < 2:
             raise MetricError(
                 f"球谐带功率需要 (..., lat, lon) 场，实际 ndim={forecast.ndim}",

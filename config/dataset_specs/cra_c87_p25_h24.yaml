@@ -1,0 +1,142 @@
+# CRA c87 / 0.25° / 24小时 标准数据集定义。
+
+# 第一部分：数据集标识、坐标、存储格式及校验要求。
+meta_info:
+  name: CRA c87 / 0.25° / 24小时
+  dataset_id: cra.c87.p25.h24  # 产品与变体的配置标识。
+  expected_root_dataset_id: cra.1979_2024.c87.p25.h24.v1
+  product: {id: cra.c87, version: '1.0', variant: p25.h24}
+  schema_version: '2.0'
+  status: approved
+  template_version: v1  # 本套模板规则的版本。
+  dataset_path: /workspace/data/zarr_refresh_v3/cra.1979_2024.c87.p25.h24.v1
+  auxiliary_directory: /workspace/data/zarr_refresh_v3/cra.1979_2024.c87.p25.h24.v1
+  dataset_version: v3  # 数据内容版本标识。
+  storage_format: {name: zarr, version: 3, allow_nested_groups: false}  # version表示Zarr存储格式版本。
+  data_revision: '20260920'  # 数据修订标识。
+  validation_scope: confirmed-format  # 校验范围标识。
+
+  time_coverage:
+    first: '1979-01-01T00:00:00.000000000'
+    last: '2024-12-31T00:00:00.000000000'
+    time_count: 16802
+    time_resolution: {value: 24, unit: hour}
+    timezone: UTC
+
+  grid:
+    space_resolution: 0.25  # 水平网格间隔，单位见coordinate_units。
+    coordinate_units: degree
+    latitude: {first: 90.0, last: -90.0, count: 721, direction: north-to-south}
+    longitude: {first: 0.0, last: 359.75, count: 1440, direction: west-to-east}
+
+  pressure:
+    variables: [z, t, u, v, q]
+    units: hPa
+    channel_name_template: '{variable}{level}'
+    levels: [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
+
+  channels: [z50, z100, z150, z200, z250, z300, z400, z500, z600, z700, z850, z925, z1000, t50, t100, t150,  # 完整87通道的唯一顺序。
+    t200, t250, t300, t400, t500, t600, t700, t850, t925, t1000, u50, u100, u150, u200, u250, u300, u400,
+    u500, u600, u700, u850, u925, u1000, v50, v100, v150, v200, v250, v300, v400, v500, v600, v700, v850,
+    v925, v1000, q50, q100, q150, q200, q250, q300, q400, q500, q600, q700, q850, q925, q1000, msl, t2m,
+    t2m_min, t2m_max, d2m, sst, ws10m, ws100m, u10m, v10m, u100m, v100m, lcc, mcc, hcc, tcc, ssr, ssrd, fdir,
+    ttr, tcw, tp]
+
+  arrays:
+    data: {dimensions: [time, channel, lat, lon], dtype: float16, chunks: {time: 1, channel: full, lat: full, lon: full}}  # full表示对应维度的完整长度。
+    time: {dimensions: [time], dtype: 'datetime64[ns]'}  # 时间值精度为纳秒。
+    channel: {dimensions: [channel], dtype: string}
+    lat: {dimensions: [lat], dtype: float32}
+    lon: {dimensions: [lon], dtype: float32}
+    mean: {dimensions: [channel], dtype: float32}
+    std: {dimensions: [channel], dtype: float32}
+    mask: {dimensions: [mask_channel, lat, lon], dtype: uint8}
+    mask_channel: {dimensions: [mask_channel], dtype: string}
+
+  mask:
+    channels: [land_mask, sea_mask]
+    allowed_values: [0, 1]
+    valid_value: 1  # 1表示属于该通道标识的区域。
+    complement_sum: 1  # 逐网格点要求陆地掩膜与海洋掩膜之和为1。
+
+  metadata:
+    data_attributes:  # data数组的属性要求。
+      data_representation: normalized  # 主数组的数值表示类型。
+      normalization_method: channel_dependent  # 处理流程按通道定义，步骤见variable_metadata。
+      mean_variable: mean  # 有效偏移参数数组，顺序与channels一致。
+      std_variable: std  # 有效缩放参数数组，顺序与channels一致。
+      scale_factor_location: channel.channel_info[*].scale_factor  # channel属性中各通道缩放参数的位置声明。
+      add_offset_location: channel.channel_info[*].add_offset  # channel属性中各通道偏移参数的位置声明。
+      inverse_transform: preprocessed_value = data * scale_factor + add_offset  # 存储值到预处理值的恢复公式声明。
+
+    channel_metadata:  # channel数组的逐通道属性要求。
+      attribute: channel_info  # 逐通道属性字典名称。
+      version_attribute: channel_info_schema_version  # 逐通道属性字典的结构版本字段。
+      version: '1.0'  # channel_info的结构版本。
+      require_exact_channels: true  # 键集合必须与完整channels清单一致。
+      long_name_required: true  # 逐通道说明不能为空。
+      scale_factor_from: std  # 与std中对应通道的数值一致。
+      add_offset_from: mean  # 与mean中对应通道的数值一致。
+      scale_offset_formula: preprocessed_value = normalized_value * scale_factor + add_offset  # 逐通道参数的恢复公式声明。
+
+  normalization:
+    statistics: {mean_finite: true, std_finite: true, std_positive: true}  # mean和std均须为有限值，且std严格大于0。
+    effective_statistics:
+      tp: {mean: 0.0, std: 1.0}  # log1p降水使用有效偏移0、缩放1，不再执行z-score。
+
+  auxiliaries:
+    check_variable_names: false  # NetCDF内部数据变量名不纳入约束。
+    unregistered_file_status: warning  # 未登记附件仅报告警告。
+    files:  # 文件名相对于auxiliary_directory。
+      const.nc:
+        format: netcdf
+        role: const
+        required: true
+        dimensions: [channel, lat, lon]
+        dtype: float32
+        grid: main_data  # 空间坐标的数值、长度及顺序须与主网格一致。
+        finite: true  # 所有数值均须为有限值。
+        channels: [geo, lsm, coslat, sinlat, coslon, sinlon]  # 附件自身的完整通道顺序。
+      weight.npy:
+        grid_provenance: >-
+          Review 2026-10-13: complete float32 latitude weight vector has declared axis (1,lat,1) and agrees with mean-normalized cos(latitude) within 5e-7.
+        format: npy
+        role: weight
+        required: true
+        dimensions: [singleton, lat, singleton]  # singleton维度长度为1。
+        dtype: float32
+        grid: main_data  # 轴长度与主网格匹配；坐标归属须有独立依据。
+        finite: true  # 所有数值均须为有限值。
+        nonnegative_atol: 1.0e-07  # 容差内的微小负值仍记录警告。
+        require_positive_value: true  # 至少存在一个正权重。
+
+# 第二部分：变量语义、来源及预处理流程。
+# units表示预处理结果单位；preprocessing按声明顺序执行。
+variable_metadata:
+  z: {units: "m2 s-2", long_name: "Geopotential", source_name: "z", source_units: "m2 s-2", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  t: {units: "K", long_name: "Temperature", source_name: "t", source_units: "K", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  u: {units: "m s-1", long_name: "Eastward wind", source_name: "u", source_units: "m s-1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  v: {units: "m s-1", long_name: "Northward wind", source_name: "v", source_units: "m s-1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  q: {units: "g kg-1", long_name: "Specific humidity", source_name: "q", source_units: "kg kg-1", variable_type: "instantaneous", preprocessing: [{"operation": "multiply", "factor": 1000.0, "input_units": "kg kg-1", "output_units": "g kg-1"}, {"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  msl: {units: "Pa", long_name: "Mean sea level pressure", level_type: "surface", source_name: "msl", source_units: "Pa", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  t2m: {units: "K", long_name: "2 metre temperature", level_type: "height_above_ground", level: 2, level_units: "m", source_name: "t2m", source_units: "K", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  t2m_min: {units: "K", long_name: "Daily minimum 2 metre temperature", level_type: "height_above_ground", level: 2, level_units: "m", source_name: "t2m_min", source_units: "K", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  t2m_max: {units: "K", long_name: "Daily maximum 2 metre temperature", level_type: "height_above_ground", level: 2, level_units: "m", source_name: "t2m_max", source_units: "K", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  d2m: {units: "K", long_name: "2 metre dewpoint temperature", level_type: "height_above_ground", level: 2, level_units: "m", source_name: "d2m", source_units: "K", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  sst: {units: "K", long_name: "Sea surface temperature", level_type: "surface", source_name: "sst", source_units: "K", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  ws10m: {units: "m s-1", long_name: "10 metre wind speed", level_type: "height_above_ground", level: 10, level_units: "m", source_name: ["u10m", "v10m"], source_units: "m s-1", variable_type: "derived", preprocessing: [{"operation": "hypot", "inputs": ["u10m", "v10m"]}, {"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  ws100m: {units: "m s-1", long_name: "100 metre wind speed", level_type: "height_above_ground", level: 100, level_units: "m", source_name: ["u100m", "v100m"], source_units: "m s-1", variable_type: "derived", preprocessing: [{"operation": "hypot", "inputs": ["u100m", "v100m"]}, {"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  u10m: {units: "m s-1", long_name: "10 metre eastward wind", level_type: "height_above_ground", level: 10, level_units: "m", source_name: "u10m", source_units: "m s-1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  v10m: {units: "m s-1", long_name: "10 metre northward wind", level_type: "height_above_ground", level: 10, level_units: "m", source_name: "v10m", source_units: "m s-1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  u100m: {units: "m s-1", long_name: "100 metre eastward wind", level_type: "height_above_ground", level: 100, level_units: "m", source_name: "u100m", source_units: "m s-1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  v100m: {units: "m s-1", long_name: "100 metre northward wind", level_type: "height_above_ground", level: 100, level_units: "m", source_name: "v100m", source_units: "m s-1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  lcc: {units: "1", long_name: "Low cloud cover", level_type: "surface", source_name: "lcc", source_units: "1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  mcc: {units: "1", long_name: "Medium cloud cover", level_type: "surface", source_name: "mcc", source_units: "1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  hcc: {units: "1", long_name: "High cloud cover", level_type: "surface", source_name: "hcc", source_units: "1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  tcc: {units: "1", long_name: "Total cloud cover", level_type: "surface", source_name: "tcc", source_units: "1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  ssr: {units: "W m-2", long_name: "Surface net short-wave radiation", level_type: "surface", source_name: "ssr", source_units: "J m-2", variable_type: "accumulated", preprocessing: [{"operation": "divide", "divisor": 86400.0, "accumulation_window_seconds": 86400, "input_units": "J m-2", "output_units": "W m-2"}, {"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  ssrd: {units: "W m-2", long_name: "Surface short-wave radiation downwards", level_type: "surface", source_name: "ssrd", source_units: "J m-2", variable_type: "accumulated", preprocessing: [{"operation": "divide", "divisor": 86400.0, "accumulation_window_seconds": 86400, "input_units": "J m-2", "output_units": "W m-2"}, {"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  fdir: {units: "W m-2", long_name: "Surface direct short-wave radiation", level_type: "surface", source_name: "fdir", source_units: "J m-2", variable_type: "accumulated", preprocessing: [{"operation": "divide", "divisor": 86400.0, "accumulation_window_seconds": 86400, "input_units": "J m-2", "output_units": "W m-2"}, {"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  ttr: {units: "W m-2", long_name: "Top net long-wave radiation", level_type: "surface", source_name: "ttr", source_units: "J m-2", variable_type: "accumulated", preprocessing: [{"operation": "divide", "divisor": 86400.0, "accumulation_window_seconds": 86400, "input_units": "J m-2", "output_units": "W m-2"}, {"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  tcw: {units: "kg m-2", long_name: "Total column water", level_type: "surface", source_name: "tcw", source_units: "kg m-2", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  tp: {units: "1", long_name: "Log-transformed total precipitation", level_type: "surface", source_name: "tp", source_units: "m", variable_type: "accumulated", preprocessing: [{"operation": "multiply", "factor": 1000.0, "input_units": "m", "output_units": "mm"}, {"operation": "clip_min", "minimum": 0.0}, {"operation": "log1p"}]}

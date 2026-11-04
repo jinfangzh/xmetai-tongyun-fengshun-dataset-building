@@ -9,15 +9,14 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
-from datakit.io import read_netcdf, write_netcdf
-from datakit.transforms import resize
+from datakit import io as dataset_io
 from datakit.schema import LEVELS_13
 from datakit.transforms import (
     level_to_channel,
     normalize_coordinates,
+    resize,
     select_singleton,
 )
-
 
 VARIABLES = {
     "z": "geopotential_stream-oper_daily-mean",
@@ -56,7 +55,7 @@ def _process_variable(
     resolution: float,
     engine: str,
 ) -> xr.Dataset:
-    opened = read_netcdf(source, engine=engine)
+    opened = dataset_io.open(source).read(load=True, engine=engine)
     dataset = (
         opened.to_dataset(name=opened.name or short_name)
         if isinstance(opened, xr.DataArray)
@@ -122,7 +121,7 @@ def main() -> None:
                 args.resolution,
                 args.engine,
             )
-            write_netcdf(processed, output, engine=args.engine)
+            dataset_io.open(output).write(processed, mode="w", engine=args.engine)[0]
             print(f"Saved: {output}")
 
         current += timedelta(days=1)

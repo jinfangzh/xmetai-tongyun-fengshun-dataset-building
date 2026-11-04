@@ -8,13 +8,13 @@
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
-from datakit.evaluation.adapters.babj_reader import BabjCatalog, BabjReader
 from pipelines.evaluation.protocols import (
     babj_init_times,
     babj_seed_moment,
     sample_leads,
     typhoon_storm_filter,
 )
+from pipelines.evaluation.sources.babj import BabjCatalog, BabjSource
 
 INIT_BJT = datetime(2025, 6, 10, 8, 0)  # 起报北京时（init 00 UTC + 8h）
 
@@ -77,7 +77,7 @@ def test_babj_init_times_per_storm_and_filter(tmp_path, make_babj):
     )
     obs = SimpleNamespace(
         source_id="babj",
-        reader=BabjReader(source_id="babj"),
+        reader=BabjSource(source_id="babj"),
         catalog=BabjCatalog(babj_dir),
     )
     inits = [

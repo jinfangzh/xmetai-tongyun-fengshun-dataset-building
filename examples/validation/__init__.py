@@ -1,5 +1,1 @@
-"""Validation workflow examples."""
-
-from pipelines.dataset import validate_zarr_netcdf_consistency
-
-__all__ = ["validate_zarr_netcdf_consistency"]
+"""NetCDF/Zarr comparison CLI examples; reusable checks live in datakit and pipelines."""

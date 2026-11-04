@@ -1,0 +1,101 @@
+# ERA5-Land c8 / 1.5° / 24小时 标准数据集定义。
+
+# 第一部分：数据集标识、坐标、存储格式及校验要求。
+meta_info:
+  name: ERA5-Land c8 / 1.5° / 24小时
+  dataset_id: era5-land.c8.1p5.h24  # 产品与变体的配置标识。
+  expected_root_dataset_id: land.1950_2024.c8.1p5.h24.v1
+  product: {id: era5-land.c8, version: '1.0', variant: 1p5.h24}
+  schema_version: '2.0'
+  status: approved
+  template_version: v1  # 本套模板规则的版本。
+  dataset_path: /workspace/data/zarr_refresh_v3/land.1950_2024.c8.1p5.h24.v1
+  auxiliary_directory: /workspace/data/zarr_refresh_v3/land.1950_2024.c8.1p5.h24.v1
+  dataset_version: v3  # 数据内容版本标识。
+  storage_format: {name: zarr, version: 3, allow_nested_groups: false}  # version表示Zarr存储格式版本。
+  data_revision: '20260920'  # 数据修订标识。
+  validation_scope: confirmed-format  # 校验范围标识。
+
+  time_coverage:
+    first: '1950-01-01T00:00:00.000000000'
+    last: '2024-12-31T00:00:00.000000000'
+    time_count: 27394
+    time_resolution: {value: 24, unit: hour}
+    timezone: UTC
+
+  grid:
+    space_resolution: 1.5  # 水平网格间隔，单位见coordinate_units。
+    coordinate_units: degree
+    latitude: {first: 90.0, last: -90.0, count: 121, direction: north-to-south}
+    longitude: {first: 0.0, last: 358.5, count: 240, direction: west-to-east}
+
+  channels: [stl1, stl2, stl3, stl4, swvl1, swvl2, swvl3, swvl4]  # 完整8通道的唯一顺序。
+
+  arrays:
+    data: {dimensions: [time, channel, lat, lon], dtype: float16, chunks: {time: 1, channel: full, lat: full, lon: full}}  # full表示对应维度的完整长度。
+    time: {dimensions: [time], dtype: 'datetime64[ns]'}  # 时间值精度为纳秒。
+    channel: {dimensions: [channel], dtype: string}
+    lat: {dimensions: [lat], dtype: float32}
+    lon: {dimensions: [lon], dtype: float32}
+    mean: {dimensions: [channel], dtype: float32}
+    std: {dimensions: [channel], dtype: float32}
+    mask: {dimensions: [mask_channel, lat, lon], dtype: uint8}
+    mask_channel: {dimensions: [mask_channel], dtype: string}
+
+  mask:
+    channels: [land_mask, sea_mask]
+    allowed_values: [0, 1]
+    valid_value: 1  # 1表示属于该通道标识的区域。
+    complement_sum: 1  # 逐网格点要求陆地掩膜与海洋掩膜之和为1。
+
+  metadata:
+    data_attributes:  # data数组的属性要求。
+      data_representation: normalized  # 主数组的数值表示类型。
+      normalization_method: channel_dependent  # 处理流程按通道定义，步骤见variable_metadata。
+      mean_variable: mean  # 有效偏移参数数组，顺序与channels一致。
+      std_variable: std  # 有效缩放参数数组，顺序与channels一致。
+      scale_factor_location: channel.channel_info[*].scale_factor  # channel属性中各通道缩放参数的位置声明。
+      add_offset_location: channel.channel_info[*].add_offset  # channel属性中各通道偏移参数的位置声明。
+      inverse_transform: preprocessed_value = data * scale_factor + add_offset  # 存储值到预处理值的恢复公式声明。
+
+    channel_metadata:  # channel数组的逐通道属性要求。
+      attribute: channel_info  # 逐通道属性字典名称。
+      version_attribute: channel_info_schema_version  # 逐通道属性字典的结构版本字段。
+      version: '1.0'  # channel_info的结构版本。
+      require_exact_channels: true  # 键集合必须与完整channels清单一致。
+      long_name_required: true  # 逐通道说明不能为空。
+      scale_factor_from: std  # 与std中对应通道的数值一致。
+      add_offset_from: mean  # 与mean中对应通道的数值一致。
+      scale_offset_formula: preprocessed_value = normalized_value * scale_factor + add_offset  # 逐通道参数的恢复公式声明。
+
+  normalization:
+    statistics: {mean_finite: true, std_finite: true, std_positive: true}  # mean和std均须为有限值，且std严格大于0。
+
+  auxiliaries:
+    check_variable_names: false  # NetCDF内部数据变量名不纳入约束。
+    unregistered_file_status: warning  # 未登记附件仅报告警告。
+    files:  # 文件名相对于auxiliary_directory。
+      weight.npy:
+        grid_provenance: >-
+          Review 2026-10-13: complete float32 latitude weight vector has declared axis (1,lat,1) and agrees with mean-normalized cos(latitude) within 5e-7.
+        format: npy
+        role: weight
+        required: true
+        dimensions: [singleton, lat, singleton]  # singleton维度长度为1。
+        dtype: float32
+        grid: main_data  # 轴长度与主网格匹配；坐标归属须有独立依据。
+        finite: true  # 所有数值均须为有限值。
+        nonnegative_atol: 1.0e-07  # 容差内的微小负值仍记录警告。
+        require_positive_value: true  # 至少存在一个正权重。
+
+# 第二部分：变量语义、来源及预处理流程。
+# units表示预处理结果单位；preprocessing按声明顺序执行。
+variable_metadata:
+  stl1: {units: "K", long_name: "Soil temperature level 1", level_type: "soil_layer", level: 1, level_units: "layer_index", source_name: "sot1", source_units: "K", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  stl2: {units: "K", long_name: "Soil temperature level 2", level_type: "soil_layer", level: 2, level_units: "layer_index", source_name: "sot2", source_units: "K", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  stl3: {units: "K", long_name: "Soil temperature level 3", level_type: "soil_layer", level: 3, level_units: "layer_index", source_name: "stl3", source_units: "K", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  stl4: {units: "K", long_name: "Soil temperature level 4", level_type: "soil_layer", level: 4, level_units: "layer_index", source_name: "stl4", source_units: "K", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  swvl1: {units: "m3 m-3", long_name: "Volumetric soil water layer 1", level_type: "soil_layer", level: 1, level_units: "layer_index", source_name: "vsw1", source_units: "m3 m-3", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  swvl2: {units: "m3 m-3", long_name: "Volumetric soil water layer 2", level_type: "soil_layer", level: 2, level_units: "layer_index", source_name: "vsw2", source_units: "m3 m-3", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  swvl3: {units: "m3 m-3", long_name: "Volumetric soil water layer 3", level_type: "soil_layer", level: 3, level_units: "layer_index", source_name: "swvl3", source_units: "m3 m-3", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  swvl4: {units: "m3 m-3", long_name: "Volumetric soil water layer 4", level_type: "soil_layer", level: 4, level_units: "layer_index", source_name: "swvl4", source_units: "m3 m-3", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}

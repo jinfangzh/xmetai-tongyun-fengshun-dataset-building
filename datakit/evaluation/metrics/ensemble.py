@@ -16,7 +16,6 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 import numpy as np
-import xarray as xr
 
 from datakit.evaluation.contracts import (
     EvaluationBatch,
@@ -30,21 +29,8 @@ from datakit.evaluation.metrics.base import (
     MetricState,
     ProductType,
     field_unit,
-    single_variable,
+    field_values,
 )
-
-
-def _values(data: Any) -> np.ndarray:
-    if isinstance(data, xr.DataArray):
-        return np.asarray(data.values, dtype="f8")
-    if isinstance(data, xr.Dataset):
-        return np.asarray(single_variable(data, "输入").values, dtype="f8")
-    if hasattr(data, "payload"):
-        payload = data.payload
-        if isinstance(payload, xr.Dataset):
-            payload = single_variable(payload, "输入")
-        return np.asarray(payload.values, dtype="f8")
-    return np.asarray(data, dtype="f8")
 
 
 def _weighted_sum(field: np.ndarray, weights: np.ndarray) -> float:
@@ -65,7 +51,7 @@ def _mask_field(batch: EvaluationBatch, observation: np.ndarray) -> np.ndarray:
     shape = np.shape(observation)
     if mask is None:
         return np.ones(shape, dtype=bool)
-    values = _values(mask) != 0.0
+    values = field_values(mask) != 0.0
     if values.shape == shape:
         return values
     # 集合批次可能多挂一条**前导 member 轴**：掩码是「预报 ∩ 观测」，预报没被
@@ -98,9 +84,9 @@ class CRPS(Metric):
         )
 
     def accumulate(self, batch: EvaluationBatch) -> MetricState:
-        members = _values(batch.members)
-        observation = _values(batch.observation)
-        weights = _values(batch.weights) if batch.weights is not None else None
+        members = field_values(batch.members)
+        observation = field_values(batch.observation)
+        weights = field_values(batch.weights) if batch.weights is not None else None
         if members.ndim < 2:
             raise MetricError(
                 f"CRPS 需要 (member, ...) 形态的成员场，实际 ndim={members.ndim}",
@@ -217,9 +203,9 @@ class SpreadError(Metric):
         )
 
     def accumulate(self, batch: EvaluationBatch) -> MetricState:
-        members = _values(batch.members)
-        observation = _values(batch.observation)
-        weights = _values(batch.weights) if batch.weights is not None else None
+        members = field_values(batch.members)
+        observation = field_values(batch.observation)
+        weights = field_values(batch.weights) if batch.weights is not None else None
         if members.ndim < 2:
             raise MetricError(
                 f"Spread-Error 需要 (member, ...) 形态的成员场，实际 ndim={members.ndim}",

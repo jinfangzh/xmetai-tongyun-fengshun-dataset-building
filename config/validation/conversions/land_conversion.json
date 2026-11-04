@@ -1,0 +1,84 @@
+{
+  "source_path": "/path/to/frozen-source/land.zarr",
+  "target_schema": "../../dataset_specs/era5_land_c8_1p5_h24.yaml",
+  "conversion": {
+    "source_identity": "REPLACE_WITH_APPROVED_SOURCE_ID",
+    "source_snapshot_id": "REPLACE_WITH_APPROVED_SOURCE_SNAPSHOT",
+    "rules_version": "1.0",
+    "source_first_time": "1950-01-01T00:00:00",
+    "source_last_time": "2024-12-31T00:00:00",
+    "source_cadence_hours": 24,
+    "source_channels": [
+      "stl1",
+      "stl2",
+      "stl3",
+      "stl4",
+      "swvl1",
+      "swvl2",
+      "swvl3",
+      "swvl4"
+    ],
+    "source_variable": "data",
+    "source_channel_coordinate": "level",
+    "source_dimensions": [
+      "time",
+      "level",
+      "lat",
+      "lon"
+    ],
+    "source_mean_variable": "mean",
+    "source_std_variable": "std",
+    "source_statistics": null,
+    "latitude_flip": false,
+    "rules": [
+      {
+        "target_channel": "stl1",
+        "source_channel": "stl1",
+        "atol": 0.0,
+        "rtol": 0.0
+      },
+      {
+        "target_channel": "stl2",
+        "source_channel": "stl2",
+        "atol": 0.0,
+        "rtol": 0.0
+      },
+      {
+        "target_channel": "stl3",
+        "source_channel": "stl3",
+        "atol": 0.0,
+        "rtol": 0.0
+      },
+      {
+        "target_channel": "stl4",
+        "source_channel": "stl4",
+        "atol": 0.0,
+        "rtol": 0.0
+      },
+      {
+        "target_channel": "swvl1",
+        "source_channel": "swvl1",
+        "atol": 0.0,
+        "rtol": 0.0
+      },
+      {
+        "target_channel": "swvl2",
+        "source_channel": "swvl2",
+        "atol": 0.0,
+        "rtol": 0.0
+      },
+      {
+        "target_channel": "swvl3",
+        "source_channel": "swvl3",
+        "atol": 0.0,
+        "rtol": 0.0
+      },
+      {
+        "target_channel": "swvl4",
+        "source_channel": "swvl4",
+        "atol": 0.0,
+        "rtol": 0.0
+      }
+    ]
+  }
+}

@@ -10,7 +10,7 @@ import xarray as xr
 
 spec = importlib.util.spec_from_file_location(
     "oras5_nc_to_zarr_88",
-    Path(__file__).parents[1] / "examples/dataset_building/oras5_nc_to_zarr_88.py",
+    Path(__file__).parents[1] / "examples/dataset_building/history/oras5_nc_to_zarr_88.py",
 )
 assert spec is not None and spec.loader is not None
 oras5_nc_to_zarr_88 = importlib.util.module_from_spec(spec)
@@ -83,11 +83,6 @@ def _patch_args(
     monkeypatch.setattr(oras5_nc_to_zarr_88, "get_args", lambda: args)
 
 
-def _patch_read_zarr(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _reader(path: Path):
-        return xr.open_zarr(path, consolidated=False).load()
-
-    monkeypatch.setattr(oras5_nc_to_zarr_88, "read_zarr", _reader)
 
 
 @pytest.mark.parametrize(
@@ -161,7 +156,6 @@ def test_main_flat_daily_to_zarr_success(tmp_path: Path, monkeypatch: pytest.Mon
         start_date=None,
         end_date=None,
     )
-    _patch_read_zarr(monkeypatch)
 
     oras5_nc_to_zarr_88.main()
 

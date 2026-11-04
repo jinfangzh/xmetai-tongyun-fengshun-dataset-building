@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable
 
 #: 轻量指标：逐样本 O(n) 的配对统计，线程并行通常就够（GIL 释放点在 numpy 里）
 _LIGHT_METRICS = frozenset(

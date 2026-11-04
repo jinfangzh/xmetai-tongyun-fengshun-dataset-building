@@ -1,10 +1,10 @@
 """Evaluation pipeline declarations, protocols, and execution.
 
-Runner 走模块级 ``__getattr__`` 惰性导入：执行层（``execution/``）要用
-``datakit.evaluation.matching``，而 runner 又要导入执行层，急切导入会形成环。
+Runner 通过模块级 ``__getattr__`` 惰性导入，避免导入数据源或匹配模块时
+同时加载整套执行层和报告组件。
 """
 
-from datakit.evaluation.matching import Matcher
+from pipelines.evaluation.matching import Matcher
 from pipelines.evaluation.spec import (
     MetricSpec,
     PipelineSpec,

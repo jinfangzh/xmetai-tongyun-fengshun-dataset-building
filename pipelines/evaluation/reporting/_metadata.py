@@ -117,3 +117,10 @@ def region_display(name: str, labels: Mapping[str, str]) -> str:
     """区域名附上已声明的边界；不推断缺失边界。"""
     bounds = labels.get(name)
     return f"{name} [{bounds}]" if bounds else str(name)
+
+
+def source_of(sources: dict[str, str] | None, name: str) -> str:
+    """标注报告数据来源；调用方未提供路径时明确说明。"""
+    if sources and sources.get(name):
+        return f"`{sources[name]}`"
+    return "未提供（调用方应在 sources 里给出文件路径）"

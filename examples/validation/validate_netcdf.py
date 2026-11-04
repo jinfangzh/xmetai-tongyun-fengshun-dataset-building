@@ -22,12 +22,19 @@ import xarray as xr
 from datakit.validation import (
     analyze_range,
     count_invalid,
-    validate_weather_array,
+)
+from datakit.validation.structure import (
+    check_channels,
+    check_coordinates,
+    check_dimensions,
 )
 
 
 def _decode_channel(values: list[Any]) -> list[str]:
-    return [item.decode("utf-8") if isinstance(item, bytes) else str(item) for item in values]
+    return [
+        item.decode("utf-8") if isinstance(item, bytes) else str(item)
+        for item in values
+    ]
 
 
 def _normalize_dims(array: xr.DataArray) -> xr.DataArray:
@@ -111,7 +118,9 @@ def _load_netcdf_array(path: Path, variable: str) -> xr.DataArray:
 def _build_common_order(left: xr.DataArray, right: xr.DataArray) -> tuple[str, ...]:
     preferred = ("time", "channel", "lat", "lon")
     shared = [name for name in preferred if name in left.dims and name in right.dims]
-    shared.extend(name for name in left.dims if name in right.dims and name not in shared)
+    shared.extend(
+        name for name in left.dims if name in right.dims and name not in shared
+    )
     return tuple(shared)
 
 
@@ -123,13 +132,19 @@ def _align_for_compare(
 
     common_order = _build_common_order(converted, reference)
     if not common_order:
-        raise ValueError("No shared dimensions found between converted and reference arrays")
+        raise ValueError(
+            "No shared dimensions found between converted and reference arrays"
+        )
 
     for name in common_order:
         if name not in converted.coords:
-            converted = converted.assign_coords({name: np.arange(converted.sizes[name])})
+            converted = converted.assign_coords(
+                {name: np.arange(converted.sizes[name])}
+            )
         if name not in reference.coords:
-            reference = reference.assign_coords({name: np.arange(reference.sizes[name])})
+            reference = reference.assign_coords(
+                {name: np.arange(reference.sizes[name])}
+            )
 
     converted_aligned, reference_aligned = xr.align(
         converted.transpose(*common_order),
@@ -200,21 +215,26 @@ def _print_basic_quality(label: str, array: xr.DataArray) -> None:
     print("=" * 60)
     print(array)
 
+    print("\nValidation")
+    checks = check_dimensions(array, required_dims=("time", "lat", "lon"))
+    checks += check_coordinates(array)
+    channel = "channel" if "channel" in array.dims else "level"
+    checks += check_channels(array, coordinate=channel)
+    failures = [check for check in checks if check.status == "fail"]
+    if failures:
+        print("Validation failed:")
+        for check in failures:
+            print(f"[{check.status}] {check.check_id}: {check.evidence}")
+        return
+    print("Validation passed")
+
     nan_count, inf_count = count_invalid(array)
     print("\nInvalid value statistics")
     print(f"NaN count : {nan_count}")
     print(f"Inf count : {inf_count}")
 
-    print("\nValidation")
-    try:
-        validate_weather_array(array)
-        print("Validation passed")
-    except ValueError as exc:
-        print("Validation failed:")
-        print(exc)
-
     print("\nRange analysis")
-    print(analyze_range(array, axis="channel"))
+    print(analyze_range(array, axis=channel))
 
 
 def main() -> None:

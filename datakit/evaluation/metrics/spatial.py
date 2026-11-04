@@ -17,7 +17,6 @@ from __future__ import annotations
 from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as np
-import xarray as xr
 
 from datakit.evaluation.contracts import (
     EvaluationBatch,
@@ -30,7 +29,7 @@ from datakit.evaluation.metrics.base import (
     MetricRequirements,
     MetricState,
     ProductType,
-    single_variable,
+    field_values,
 )
 
 try:  # pragma: no cover - 取决于运行环境
@@ -65,19 +64,6 @@ def neighborhood_fraction(binary: np.ndarray, size: int) -> np.ndarray:
     return total / float(size * size)
 
 
-def _values(data: Any) -> np.ndarray:
-    if isinstance(data, xr.DataArray):
-        return np.asarray(data.values, dtype="f8")
-    if isinstance(data, xr.Dataset):
-        return np.asarray(single_variable(data, "输入").values, dtype="f8")
-    if hasattr(data, "payload"):
-        payload = data.payload
-        if isinstance(payload, xr.Dataset):
-            payload = single_variable(payload, "输入")
-        return np.asarray(payload.values, dtype="f8")
-    return np.asarray(data, dtype="f8")
-
-
 class FractionsSkillScore(Metric):
     """FSS：逐 (阈值 × 邻域窗口) 输出。"""
 
@@ -101,8 +87,8 @@ class FractionsSkillScore(Metric):
         )
 
     def accumulate(self, batch: EvaluationBatch) -> MetricState:
-        forecast = _values(batch.forecast)
-        observation = _values(batch.observation)
+        forecast = field_values(batch.forecast)
+        observation = field_values(batch.observation)
         if forecast.shape != observation.shape:
             raise MetricError(
                 f"FSS 需要同形状的预报与实况场：{forecast.shape} vs {observation.shape}",
@@ -111,7 +97,7 @@ class FractionsSkillScore(Metric):
 
         keep = ~(np.isnan(forecast) | np.isnan(observation))
         if batch.valid_mask is not None:
-            mask = _values(batch.valid_mask)
+            mask = field_values(batch.valid_mask)
             if mask.shape == keep.shape:
                 keep = keep & mask.astype(bool)
 

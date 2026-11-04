@@ -9,29 +9,29 @@ import numpy as np
 
 from datakit.evaluation.contracts import DataIndex, DataRequest
 from datakit.evaluation.errors import ConfigError, EvaluationError
-from datakit.schema.semantics import TemporalKind
-from pipelines.evaluation.execution.sources import (
-    ClimatologyCatalog,
-    ClimatologyReader,
-    GriddedCatalog,
-    GriddedReader,
-)
 from datakit.evaluation.metrics.acc import ACC
 from datakit.evaluation.metrics.bias import Bias
 from datakit.evaluation.metrics.ensemble import CRPS, SpreadError
 from datakit.evaluation.metrics.rmse import RMSE
 from datakit.evaluation.metrics.specialized import ActivityRatio, PowerSpectrum
-from pipelines.evaluation.reporting import ReportWriter, RunContext
+from datakit.schema.semantics import TemporalKind
+from datakit.transforms.spatial import align_lon_to, align_to_grid
 from pipelines.evaluation.components import register_builtin_components
-from datakit.evaluation.ensemble import compute_ensemble_mean
-from datakit.evaluation.matching import (
+from pipelines.evaluation.ensemble import compute_ensemble_mean
+from pipelines.evaluation.matching import (
     DERIVED_VARIABLES,
     Matcher,
     add_derived_variables,
     narrow_batch,
 )
-from datakit.io.readers.layouts import CRA_LAYOUT, FENGQING_LAYOUT
-from datakit.transforms.spatial import align_lon_to, align_to_grid
+from pipelines.evaluation.reporting import ReportWriter, RunContext
+from pipelines.evaluation.sources import (
+    ClimatologyCatalog,
+    ClimatologyReader,
+    GriddedCatalog,
+    GriddedReader,
+)
+from pipelines.evaluation.sources.dataset_profiles import CRA_LAYOUT, FENGQING_LAYOUT
 
 
 def run_serial_evaluation(cfg: Any) -> list:

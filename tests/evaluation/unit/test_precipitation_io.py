@@ -15,11 +15,10 @@ import pytest
 
 from datakit.evaluation.contracts import DataIndex, DataKind, DataRequest
 from datakit.evaluation.errors import DecodeError, DiscoveryError
-from pipelines.evaluation.execution.sources import (
+from pipelines.evaluation.sources import (
     DiamondStationCatalog,
     DiamondStationReader,
     load_station_whitelist,
-    parse_station_file_time,
 )
 
 T0 = datetime(2025, 8, 20, 0, 0)
@@ -47,8 +46,8 @@ def test_catalog_discovers_layered_layout_in_time_order(tmp_path, make_station_o
     make_station_obs(station_file(root, T1), T1, LATE)
 
     index = DiamondStationCatalog(root).discover(_request())
-    assert [path.name for path in index.available] == ["00.000", "01.000"]
-    assert [path.parent.name for path in index.available] == ["20250820", "20250820"]
+    assert [record.path.name for record in index.available] == ["00.000", "01.000"]
+    assert [record.path.parent.name for record in index.available] == ["20250820", "20250820"]
     assert index.ambiguous == []
     assert index.source_id == "diamond_station"
 
@@ -59,7 +58,7 @@ def test_catalog_discovers_flat_layout(tmp_path, make_station_obs, flat_station_
     make_station_obs(flat_station_file(flat, T1), T1, LATE)
 
     index = DiamondStationCatalog(flat).discover(_request())
-    assert [path.name for path in index.available] == ["2025082000.000", "2025082001.000"]
+    assert [record.path.name for record in index.available] == ["2025082000.000", "2025082001.000"]
 
 
 def test_catalog_errors(tmp_path):
@@ -135,7 +134,7 @@ def test_reader_applies_station_whitelist(tmp_path, make_station_obs, station_fi
     make_station_obs(station_file(root, T1), T1, LATE)
     catalog = DiamondStationCatalog(root)
 
-    bundle = DiamondStationReader(station_whitelist=[50007, 50005]).read(
+    bundle = DiamondStationReader(station_whitelist=[50007, 99999, 50005]).read(
         _request(), catalog.discover(_request())
     )
     assert bundle.payload["station"].values.tolist() == [50005, 50007]
@@ -160,11 +159,15 @@ def test_reader_rejects_empty_index_and_unparsable_files(tmp_path):
 # ---------------------------------------------------------------- 文件名与白名单
 
 
-def test_parse_station_file_time_both_layouts_and_error(station_file, flat_station_file):
-    assert parse_station_file_time(station_file("root", T1)) == T1
-    assert parse_station_file_time(flat_station_file("root", T1)) == T1
+def test_catalog_file_time_both_layouts_and_error(
+    tmp_path, make_station_obs, station_file, flat_station_file
+):
+    catalog = DiamondStationCatalog(tmp_path)
+    for path in (station_file(tmp_path, T1), flat_station_file(tmp_path, T1)):
+        make_station_obs(path, T1, LATE)
+        assert catalog.file_time(path) == T1
     with pytest.raises(ValueError, match="无法解析观测文件时间"):
-        parse_station_file_time(Path("root") / "junk.000")
+        catalog.file_time(tmp_path / "junk.000")
 
 
 def test_load_station_whitelist_sources_and_errors(tmp_path):

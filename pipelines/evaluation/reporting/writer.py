@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from datakit.evaluation.contracts import MetricResult
 from datakit.evaluation.errors import OutputError
-from datakit.evaluation.registry import ComponentType, get_registry
+from pipelines.evaluation.registry import ComponentType, get_registry
 from pipelines.evaluation.reporting.tables import (
     COVERAGE_COLUMNS,
     DETAIL_COLUMNS,

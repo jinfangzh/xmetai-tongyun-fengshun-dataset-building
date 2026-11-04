@@ -18,10 +18,9 @@ from datetime import datetime, timedelta
 from functools import partial
 from typing import Any, Dict, List, Optional, Tuple
 
-from pipelines.evaluation.components import register_builtin_components
 from datakit.evaluation.contracts import DataIndex, DataRequest
 from datakit.evaluation.errors import ConfigError, EvaluationError
-from datakit.evaluation.registry import ComponentType, get_registry
+from pipelines.evaluation.components import register_builtin_components
 from pipelines.evaluation.execution.executor import needs_reference
 from pipelines.evaluation.execution.loader import RoleSpec, RunLoader
 from pipelines.evaluation.execution.profiles import ResourceProfile, union_profile
@@ -30,10 +29,11 @@ from pipelines.evaluation.protocols import (
     TYPHOON_PROTOCOLS,
     babj_init_times,
     sample_leads,
-    station_observation_span,
     select_observation_files,
+    station_observation_span,
     typhoon_storm_filter,
 )
+from pipelines.evaluation.registry import ComponentType, get_registry
 from pipelines.evaluation.spec import PipelineSpec
 
 log = logging.getLogger(__name__)

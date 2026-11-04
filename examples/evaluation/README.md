@@ -1,9 +1,15 @@
-# 评测配置与报告
+# 预报数据评测与报告工作流
 
-本目录存放具体数据位置、评测时间和输出位置。通用评测流程位于
-`pipelines/evaluation/`，指标与数据契约位于 `datakit/evaluation/`。
+本目录组织不同来源预报数据的评测任务。配置指定预报、实况和可选参考数据的位置，
+以及变量、起报时间、预报时效、指标参数和输出位置。运行入口加载配置并交给
+`pipelines/evaluation/` 执行，指标和共享契约由 `datakit/evaluation/` 提供。
 
-在仓库根目录安装 `.[evaluation]` 后，可运行：
+任务过程是：准备输入 → 按规则配对 → 计算与归并评分 → 写出产物 → 可选生成报告。
+评测对象可以来自 AI 模型、数值预报系统或集合预报等产品。
+
+## 准备配置并执行评分
+
+在仓库根目录安装 `.[io,parallel,evaluation]`，按实际数据调整配置后运行：
 
 ```bash
 python -m pipelines.evaluation --config fdp_rmse_single_fengqing
@@ -15,13 +21,15 @@ python -m pipelines.evaluation --config fdp_precip_ens_fengqing
 也可以传入配置文件的完整路径。运行真实资料配置前，请按本目录中相应文件设置
 数据目录和输出目录。
 
-通用示例入口支持单个 `cfg` 和批量 `cfgs`，适用于各模型配置：
+通用示例入口支持单个 `cfg` 和批量 `cfgs`，适用于不同预报数据的配置：
 
 ```bash
 python -m examples.evaluation.run_evaluation --config weather_ts_single_tongyun
 # 显式开启报告
 python -m examples.evaluation.run_evaluation --config weather_rmse_single_fuxi --report
 ```
+
+## 输出评分与生成报告
 
 默认只评估并保存评分，不生成报告。传 `--report` 才会在 `<output_dir>/report/`
 生成报告，标题取结果中的 run ID，也可用 `--model-name` 指定。
@@ -48,12 +56,14 @@ python -m examples.evaluation.run_evaluation --config weather_rmse_single_fuxi -
 `["weather_ts_ens", "weather_ts_ens_prob"]` 可生成包含概率评分的 TS 报告；
 单独的 `weather_ts_ens_prob` 没有报告模板，但仍可正常执行评估。
 
-已有 CSV 时，可以独立生成报告，无需重跑评测：
+## 从已有评分重建报告
+
+已有评分表和 manifest 时，可以独立生成报告，无需重跑评测：
 
 ```bash
 python -m pipelines.evaluation.reporting \
-    /workspace/szwCode/evaluation_results/weather_ts_single_tongyun_for_datakittest_all \
-    --result reports/weather_ts_single_fgvp \
+    /data/evaluation/weather_ts_single_tongyun \
+    --result reports/weather_ts_single_tongyun \
     --model Tongyun
 ```
 
@@ -71,6 +81,8 @@ build_report(
     model_name="FengQing",
 )
 ```
+
+## 组件与工作流分工
 
 报告代码分工：
 
@@ -100,6 +112,6 @@ build_report(
 
 资料路径和评估时段由配置文件指定；重建报告时直接使用已有产物目录。
 
-相同输入下应使用相同模型名、报告参数、绘图库版本、字体和可选依赖（如 seaborn），
+相同输入下应使用相同展示名称、报告参数、绘图库版本、字体和可选依赖（如 seaborn），
 以核对图片一致性。报告时间、输出路径以及台风报告的实现校验摘要会随运行变化，
 不作为评分或图表差异。

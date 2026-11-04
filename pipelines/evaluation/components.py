@@ -17,18 +17,23 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from datakit.evaluation.errors import ConfigError
-from pipelines.evaluation.reporting.views import (
-    write_csv_long, write_coverage, write_details, write_json,
-    write_categorical_wide, write_probability_wide, write_spectrum,
-    write_typhoon_cases,
-)
-from datakit.evaluation.registry import (
+from pipelines.evaluation.registry import (
     get_registry,
     register_metric,
     register_protocol,
     register_reader,
     register_transform,
     register_writer,
+)
+from pipelines.evaluation.reporting.views import (
+    write_categorical_wide,
+    write_coverage,
+    write_csv_long,
+    write_details,
+    write_json,
+    write_probability_wide,
+    write_spectrum,
+    write_typhoon_cases,
 )
 
 
@@ -60,10 +65,10 @@ def _gridded_source(
 ) -> SourceHandle:
     """通用格点数据源：具名布局 + 通用 Reader/Catalog。
 
-    数据源之间的差别只有布局声明（见 ``datakit/io/readers/layouts.py``），
+    数据源之间的差别只有布局声明（见 ``config/data_sources``），
     所以这里不需要为每个模型写一个 Reader 类。
     """
-    from pipelines.evaluation.execution.sources import GriddedCatalog, GriddedReader
+    from pipelines.evaluation.sources import GriddedCatalog, GriddedReader
 
     selected = layout.with_step_hours(step_hours) if step_hours is not None else layout
     source_id = params.get("source_id", default_source_id)
@@ -81,7 +86,7 @@ def _gridded_source(
 
 
 def _fuxi_source(**params) -> SourceHandle:
-    from datakit.io.readers.layouts import FUXI_LAYOUT
+    from pipelines.evaluation.sources.dataset_profiles import FUXI_LAYOUT
 
     return _gridded_source(
         FUXI_LAYOUT, params, "fuxi", float(params.get("step_hours", 6.0))
@@ -89,7 +94,7 @@ def _fuxi_source(**params) -> SourceHandle:
 
 
 def _fuxi_ensemble_source(**params) -> SourceHandle:
-    from datakit.io.readers.layouts import FUXI_ENS_LAYOUT
+    from pipelines.evaluation.sources.dataset_profiles import FUXI_ENS_LAYOUT
 
     return _gridded_source(
         FUXI_ENS_LAYOUT, params, "fuxi_ens", float(params.get("step_hours", 6.0))
@@ -97,7 +102,7 @@ def _fuxi_ensemble_source(**params) -> SourceHandle:
 
 
 def _station_source(**params) -> SourceHandle:
-    from pipelines.evaluation.execution.sources import (
+    from pipelines.evaluation.sources import (
         DiamondStationCatalog,
         DiamondStationReader,
         load_station_whitelist,
@@ -117,24 +122,24 @@ def _station_source(**params) -> SourceHandle:
 
 def _babj_source(**params) -> SourceHandle:
     """BABJ 台风路径报文（diamond7）。一个文件 = 一号台风的整条路径。"""
-    from datakit.evaluation.adapters.babj_reader import BabjCatalog, BabjReader
+    from pipelines.evaluation.sources.babj import BabjCatalog, BabjSource
 
     source_id = params.get("source_id", "babj")
     root = _require_root(params, "babj")
     return SourceHandle(
-        reader=BabjReader(source_id=source_id),
+        reader=BabjSource(source_id=source_id),
         catalog=BabjCatalog(root),
         config=params,
     )
 
 
 def _fengqing_source(**params) -> SourceHandle:
-    from datakit.io.readers.layouts import FENGQING_LAYOUT
+    from pipelines.evaluation.sources.dataset_profiles import FENGQING_LAYOUT
 
     return _gridded_source(FENGQING_LAYOUT, params, "fengqing")
 
 
-def _phys_source(layout_name: str, default_source_id: str):
+def _phys_source(layout, default_source_id: str):
     """按 xu 报告口径（z500 = m²/s²、q = g/kg）读预报的通用工厂。
 
     与 ``_fuxi_source`` 等的差别只在那份布局声明，所以共用 ``_gridded_source``；
@@ -142,11 +147,9 @@ def _phys_source(layout_name: str, default_source_id: str):
     """
 
     def factory(**params) -> SourceHandle:
-        from datakit.io.readers.layouts import LAYOUTS
-
         override = params.get("step_hours")
         return _gridded_source(
-            LAYOUTS[layout_name],
+            layout,
             params,
             default_source_id,
             float(override) if override is not None else None,
@@ -156,7 +159,7 @@ def _phys_source(layout_name: str, default_source_id: str):
 
 
 def _cra_source(**params) -> SourceHandle:
-    from datakit.io.readers.layouts import CRA_LAYOUT
+    from pipelines.evaluation.sources.dataset_profiles import CRA_LAYOUT
 
     return _gridded_source(CRA_LAYOUT, params, "cra")
 
@@ -168,21 +171,26 @@ def _era5_zarr_source(**params) -> SourceHandle:
     所以有自己的 Catalog；变量/单位/分组仍走 ``ERA5_ZARR_LAYOUT`` 声明。
     一个 run 可以给两个 store（``{"pl": ..., "sfc": ...}``）。
     """
-    from datakit.evaluation.adapters.era5_zarr_reader import Era5ZarrCatalog, Era5ZarrReader
+    from pipelines.evaluation.sources.era5_zarr import (
+        Era5ZarrCatalog,
+        Era5ZarrSource,
+    )
 
     source_id = params.get("source_id", "era5_zarr")
     stores = params.get("stores") or {}
     if not stores:
-        raise ConfigError("reader 'era5_zarr' 需要 stores（如 {'pl': ..., 'sfc': ...}）")
+        raise ConfigError(
+            "reader 'era5_zarr' 需要 stores（如 {'pl': ..., 'sfc': ...}）"
+        )
     return SourceHandle(
-        reader=Era5ZarrReader(source_id=source_id, stores=stores),
+        reader=Era5ZarrSource(source_id=source_id, stores=stores),
         catalog=Era5ZarrCatalog(stores),
         config=params,
     )
 
 
 def _climatology_source(**params) -> SourceHandle:
-    from pipelines.evaluation.execution.sources import (
+    from pipelines.evaluation.sources import (
         ClimatologyCatalog,
         ClimatologyReader,
     )
@@ -199,18 +207,19 @@ def _climatology_source(**params) -> SourceHandle:
 
 def _daily_climatology_source(**params) -> SourceHandle:
     """单文件日序气候态（与按 MMDDHH 找文件的 climatology 是两种索引方式）。"""
-    from datakit.evaluation.adapters.daily_climatology_reader import (
+    from pipelines.evaluation.sources.daily_climatology import (
         DEFAULT_SMOOTH_DAYS,
         DailyClimatologyCatalog,
-        DailyClimatologyReader,
+        DailyClimatologySource,
     )
 
     source_id = params.get("source_id", "daily_climatology")
     root = _require_root(params, "daily_climatology")
     return SourceHandle(
-        reader=DailyClimatologyReader(
+        reader=DailyClimatologySource(
             source_id=source_id,
             smooth_days=int(params.get("smooth_days", DEFAULT_SMOOTH_DAYS)),
+            mapping=params.get("mapping"),
             scales=params.get("scales"),
             units=params.get("units"),
         ),
@@ -220,12 +229,21 @@ def _daily_climatology_source(**params) -> SourceHandle:
 
 
 def _ref_probability_source(**params) -> SourceHandle:
-    from datakit.evaluation.adapters.ref_probability_reader import RefProbabilityReader
+    from pipelines.evaluation.sources.reference_probability import (
+        RefProbabilitySource,
+    )
 
     source_id = params.get("source_id", "ref_probability")
     root = _require_root(params, "ref_probability")
+    layout = params.get("layout", params.get("description"))
+    if layout == "station_probability":
+        layout = None
     return SourceHandle(
-        reader=RefProbabilityReader(root_dir=root, source_id=source_id),
+        reader=RefProbabilitySource(
+            root_dir=root,
+            source_id=source_id,
+            layout=layout,
+        ),
         catalog=None,
         config=params,
     )
@@ -249,7 +267,7 @@ def _transform_time_window(window_hours: float, time_dim: str = "lead_time", **p
 
 
 def _transform_ensemble_mean(member_dim: str = "member", **params):
-    from datakit.evaluation.ensemble import EnsembleMeanTransform
+    from pipelines.evaluation.ensemble import EnsembleMeanTransform
 
     return EnsembleMeanTransform(member_dim=member_dim)
 
@@ -417,7 +435,15 @@ def register_builtin_components() -> None:
 
 def _register_all() -> None:
     """一次性注册全部内置组件（只被 register_builtin_components 持锁调用）。"""
-    register_reader("fuxi", "1.0.0", _fuxi_source, "FuXi 网格预报：root/YYYYMMDD/NNN.nc")
+    from pipelines.evaluation.sources.dataset_profiles import (
+        FENGQING_PHYS_LAYOUT,
+        FUXI_ENS_PHYS_LAYOUT,
+        FUXI_PHYS_LAYOUT,
+    )
+
+    register_reader(
+        "fuxi", "1.0.0", _fuxi_source, "FuXi 网格预报：root/YYYYMMDD/NNN.nc"
+    )
     register_reader(
         "fuxi_ens",
         "1.0.0",
@@ -435,19 +461,19 @@ def _register_all() -> None:
     register_reader(
         "fuxi_phys",
         "1.0.0",
-        _phys_source("fuxi_phys", "fuxi"),
+        _phys_source(FUXI_PHYS_LAYOUT, "fuxi"),
         "FuXi 网格预报（xu 报告口径：z500 = m²/s²、q = g/kg）",
     )
     register_reader(
         "fuxi_ens_phys",
         "1.0.0",
-        _phys_source("fuxi_ens_phys", "fuxi_ens"),
+        _phys_source(FUXI_ENS_PHYS_LAYOUT, "fuxi_ens"),
         "FuXi 集合预报（xu 报告口径：z500 = m²/s²、q = g/kg）",
     )
     register_reader(
         "fengqing_phys",
         "1.0.0",
-        _phys_source("fengqing_phys", "fengqing"),
+        _phys_source(FENGQING_PHYS_LAYOUT, "fengqing"),
         "风清单卡预报（xu 报告口径：z500 = m²/s²、q = g/kg）",
     )
     register_reader("cra", "1.0.0", _cra_source, "CRA40 再分析实况")
@@ -485,7 +511,12 @@ def _register_all() -> None:
         _transform_time_window,
         "固定窗口时间累积（如 24h 降水）",
     )
-    register_transform("ensemble_mean", "1.0.0", _transform_ensemble_mean, "集合均值（DataBundle -> DataBundle）")
+    register_transform(
+        "ensemble_mean",
+        "1.0.0",
+        _transform_ensemble_mean,
+        "集合均值（DataBundle -> DataBundle）",
+    )
 
     register_metric("rmse", "1.0.0", _metric_rmse, "均方根误差")
     register_metric("bias", "1.0.0", _metric_bias, "平均误差")
@@ -512,23 +543,31 @@ def _register_all() -> None:
     register_metric("ts_score", "1.0.0", _metric_ts_score, "分类检验 TS/POD/FAR/BIAS")
     register_metric(
         "ensemble_probability",
-        "1.0.0",
+        "1.1.0",
         _metric_ensemble_probability,
         "集合概率评分 AROC/BS/BSS（需要原始成员）",
     )
     register_metric("crps", "1.0.0", _metric_crps, "集合 CRPS（纬度加权闭式解）")
     register_metric(
-        "spread_error", "1.0.0", _metric_spread_error,
+        "spread_error",
+        "1.0.0",
+        _metric_spread_error,
         "集合离散度-误差比（含 Spread 与 RMSE；ddof=0 vfc 口径 / 1 FDP 口径）",
     )
     register_metric(
         "fss", "1.0.0", _metric_fss, "邻域分数技巧评分（空间检验，需网格场）"
     )
     register_metric(
-        "activity", "1.0.0", _metric_activity, "活跃度比（距平加权标准差之比，需气候态）"
+        "activity",
+        "1.0.0",
+        _metric_activity,
+        "活跃度比（距平加权标准差之比，需气候态）",
     )
     register_metric(
-        "spectrum", "1.0.0", _metric_spectrum, "功率谱（二维 FFT，对原始场，0-max_k 波）"
+        "spectrum",
+        "1.0.0",
+        _metric_spectrum,
+        "功率谱（二维 FFT，对原始场，0-max_k 波）",
     )
     register_metric(
         "zonal_spectrum",
@@ -569,9 +608,14 @@ def _register_all() -> None:
         "批次带成员轴；样本键为 storm",
     )
 
-    register_writer("csv_long", "1.0.0", lambda **kw: write_csv_long, "统一长表 scores.csv")
     register_writer(
-        "coverage", "1.0.0", lambda **kw: write_coverage, "请求/有效样本覆盖（可由长表派生）"
+        "csv_long", "1.0.0", lambda **kw: write_csv_long, "统一长表 scores.csv"
+    )
+    register_writer(
+        "coverage",
+        "1.0.0",
+        lambda **kw: write_coverage,
+        "请求/有效样本覆盖（可由长表派生）",
     )
     register_writer(
         "details",
@@ -605,7 +649,7 @@ def _register_all() -> None:
 
 def available_components() -> Dict[str, List[str]]:
     """列出各类已注册组件的短名称（用于 --list 与错误提示）。"""
-    from datakit.evaluation.registry import ComponentType
+    from pipelines.evaluation.registry import ComponentType
 
     register_builtin_components()
     return {kind.value: get_registry().names(kind) for kind in ComponentType}
