@@ -134,7 +134,7 @@ def test_reader_applies_station_whitelist(tmp_path, make_station_obs, station_fi
     make_station_obs(station_file(root, T1), T1, LATE)
     catalog = DiamondStationCatalog(root)
 
-    bundle = DiamondStationReader(station_whitelist=[50007, 50005]).read(
+    bundle = DiamondStationReader(station_whitelist=[50007, 99999, 50005]).read(
         _request(), catalog.discover(_request())
     )
     assert bundle.payload["station"].values.tolist() == [50005, 50007]

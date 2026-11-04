@@ -61,7 +61,9 @@ def read_mapped_records(
     for record in records:
         fields = []
         for name, filters in (variable_filters or {None: None}).items():
-            options = {"engine_fallback": engine_fallback}
+            options = {}
+            if engine not in {"cfgrib", "zarr"} and engine_fallback is not None:
+                options["engine_fallback"] = engine_fallback
             if engine != "netcdf":
                 options["engine"] = engine
             if filters is not None:

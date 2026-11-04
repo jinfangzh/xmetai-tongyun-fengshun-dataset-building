@@ -48,6 +48,7 @@ def combine_partitions(records, datasets, description=None):
             )
         original_dims = dict(dataset.sizes)
         # Only explicitly declared singleton record axes may be removed.
+        squeezed = []
         for dim in description.get("structure", {}).get("record_dimensions", []):
             if dim in dataset.dims:
                 if dataset.sizes[dim] != 1:
@@ -56,7 +57,8 @@ def combine_partitions(records, datasets, description=None):
                     )
                 # Keep its value as an auxiliary coordinate, not a guessed time.
                 dataset = dataset.squeeze(dim, drop=False)
-        added = []
+                squeezed.append(dim)
+        added, expanded = [], []
         for key in _COORDINATES:
             if key not in record.fields:
                 continue
@@ -71,6 +73,7 @@ def combine_partitions(records, datasets, description=None):
                     )
                 if key not in dataset.dims:
                     dataset = dataset.expand_dims(key)
+                    expanded.append(key)
             elif key in dataset.dims:
                 raise ValueError(f"Cannot replace an unlabeled dimension {key!r}")
             else:
@@ -86,6 +89,8 @@ def combine_partitions(records, datasets, description=None):
                 "variables": list(original.data_vars),
                 "dimensions": original_dims,
                 "added": added,
+                "expanded": expanded,
+                "squeezed": squeezed,
                 "indexes": {dim: original[dim].values for dim in original.indexes},
                 "variable_dims": {
                     name: field.dims for name, field in original.data_vars.items()

@@ -8,14 +8,66 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import xarray as xr
 
 from ._layout import get_layout, templates
-from .backends import file_collection, files
+from .backends import file_collection
 from .backends._writing import reading
 from .backends.file_collection import discover
 from .backends.files import as_dataset, local_path
 from .records import FileRecord
+
+
+def _normalize_selection(selection):
+    """Use lists for exact labels and preserve explicit range slices."""
+    normalized = {}
+    for name, value in selection.items():
+        if isinstance(value, slice):
+            normalized[name] = value
+        elif np.ndim(value) == 0:
+            normalized[name] = [value[()] if isinstance(value, np.ndarray) else value]
+        elif np.ndim(value) == 1:
+            normalized[name] = list(value)
+        else:
+            raise ValueError(f"Selection for {name!r} must be scalar, one-dimensional or a slice")
+        if not isinstance(value, slice) and not normalized[name]:
+            raise KeyError(f"Selection for {name!r} contains no labels")
+    return normalized
+
+
+def _select_partition(dataset, selection, *, partial=False):
+    """Select by exact index positions; track requested labels without reading arrays."""
+    ranges = {name: value for name, value in selection.items() if isinstance(value, slice)}
+    selected = dataset.sel(ranges) if ranges else dataset
+    indexers, matched = {}, {}
+    for name, values in selection.items():
+        if isinstance(values, slice):
+            continue
+        index = selected.get_index(name)
+        lookup = values
+        if isinstance(index, xr.CFTimeIndex):
+            lookup = [
+                xr.date_range(start=value, periods=1, calendar=index.calendar, use_cftime=True)[0]
+                if isinstance(value, str) else value
+                for value in values
+            ]
+        positions = index.get_indexer(lookup)
+        found = np.flatnonzero(positions >= 0)
+        if not partial and len(found) != len(values):
+            missing = [values[i] for i in np.flatnonzero(positions < 0)]
+            raise KeyError(f"Selection labels not found for {name!r}: {missing!r}")
+        indexers[name] = positions[found]
+        matched[name] = set(found)
+    selected = selected.isel(indexers) if indexers else selected.copy(deep=False)
+    return selected, matched
+
+
+def _require_selection_coverage(selection, matched):
+    for name, values in selection.items():
+        if not isinstance(values, slice) and len(matched[name]) != len(values):
+            missing = [value for i, value in enumerate(values) if i not in matched[name]]
+            raise KeyError(f"Selection labels not found for {name!r}: {missing!r}")
 
 
 class _DatasetAccess:
@@ -45,24 +97,10 @@ class _DatasetAccess:
                 "example": self.path.name,
             }
         )
-        if backend is not None:
-            self._backend = backend
-        elif self.layout.get("format", {}).get("name") in {
-            "diamond_station",
-            "station_probability",
-        }:
-            from .backends import station_tables
-
-            self._backend = station_tables
-        elif self.layout.get("format", {}).get("name") == "babj":
-            from .backends import babj
-
-            self._backend = babj
-        else:
-            self._backend = file_collection if self.layout["layout"] else files
+        self._backend = backend if backend is not None else file_collection
 
     def _records(self, selection, all_files, records=None):
-        selection = {**self.selection, **(selection or {})}
+        selection = _normalize_selection({**self.selection, **(selection or {})})
         if records is not None:
             records = list(records)
             if not records:
@@ -89,7 +127,7 @@ class _DatasetAccess:
                 value = selection.get(field)
                 if value is None or isinstance(value, slice):
                     continue
-                values = value if isinstance(value, (list, tuple)) else [value]
+                values = value
                 if "%" in spec:
                     values = [
                         (
@@ -97,6 +135,8 @@ class _DatasetAccess:
                             if field == "cycle_time" and isinstance(item, str)
                             else datetime.fromisoformat(item)
                             if isinstance(item, str)
+                            else item.astype("datetime64[us]").item()
+                            if isinstance(item, np.datetime64)
                             else item
                         )
                         for item in values
@@ -106,7 +146,7 @@ class _DatasetAccess:
             step = self.layout.get("lead_time", {}).get("hours_per_index")
             value = selection["lead_time"]
             if step and not isinstance(value, slice):
-                values = value if isinstance(value, (list, tuple)) else [value]
+                values = value
                 if any(
                     float(item) / step != int(float(item) / step) for item in values
                 ):
@@ -127,20 +167,21 @@ class _DatasetAccess:
         """Locate selected files and return a closeable Dataset, lazy where supported.
 
         Coordinate selectors use Xarray names, e.g. time/init_time, lead_time and
-        member. Datetimes may be datetime objects or ISO strings. Described
-        collections require selection or explicit all_files=True.
+        member. Scalar labels preserve dimensions, like single-element lists.
+        Time labels match exactly; use slices for ranges. Empty results and
+        missing labels raise. Described collections require selection or explicit
+        all_files=True, unless records are supplied.
         """
-        explicit = records is not None
         records, selection = self._records(selection, all_files, records)
-        backend = self._record_backend(records)
+        backend = self._backend
         stack = ExitStack()
         try:
             stack.enter_context(reading(record.path for record in records))
             dataset = backend.read_records(records, self.layout, **open_options)
             stack.callback(dataset.close)
-            selected = dataset.sel(selection) if selection else dataset.copy(deep=False)
-            if explicit and any(size == 0 for size in selected.sizes.values()):
-                raise KeyError("selection matches no data in the supplied records")
+            selected, _ = _select_partition(dataset, selection)
+            if not selected.variables or any(size == 0 for size in selected.sizes.values()):
+                raise KeyError("Selection matches no data")
             selected.set_close(stack.close)
             if load:
                 selected.load()
@@ -156,20 +197,16 @@ class _DatasetAccess:
         dataset = as_dataset(dataset)
         return self._backend.write(dataset, self.path, self.layout, **write_options)
 
-    def _record_backend(self, records):
-        if self._backend is files and (len(records) > 1 or any(record.fields for record in records)):
-            return file_collection
-        return self._backend
-
     def iter_datasets(self, *, records=None, selection=None, all_files=False, **open_options):
         """Visit one physical file at a time; each context closes before advancing.
 
         These are file partitions, not complete forecast/member groups. A yielded
         lazy Dataset must be consumed or loaded before advancing the iterator.
+        Full consumption checks all requested labels across non-empty partitions;
+        missing labels or no matching data raise, with or without explicit records.
         """
-        explicit = records is not None
         records, selection = self._records(selection, all_files, records)
-        backend = self._record_backend(records)
+        backend = self._backend
         matched = {
             name: set() for name, value in selection.items() if not isinstance(value, slice)
         }
@@ -179,33 +216,15 @@ class _DatasetAccess:
                 reading([record.path]),
                 backend.read_records([record], self.layout, **open_options) as ds,
             ):
-                # A partition may contain no requested internal labels.
-                indexers = {}
-                for name, value in selection.items():
-                    if name not in ds.indexes or isinstance(value, slice):
-                        indexers[name] = value
-                        continue
-                    values = value if isinstance(value, (list, tuple)) else [value]
-                    index = ds.indexes[name]
-                    positions = index.get_indexer(values)
-                    matched[name].update(i for i, position in enumerate(positions) if position >= 0)
-                    indexers[name] = index[positions[positions >= 0]]
-                selected = ds.sel(indexers) if indexers else ds
-                if all(selected.sizes.values()):
-                    for name in matched.keys() - ds.indexes.keys():
-                        value = selection[name]
-                        count = len(value) if isinstance(value, (list, tuple)) else 1
-                        matched[name].update(range(count))
+                selected, found = _select_partition(ds, selection, partial=True)
+                if selected.variables and all(selected.sizes.values()):
+                    for name, positions in found.items():
+                        matched[name].update(positions)
                     yielded = True
                     yield selected
-        if explicit:
-            for name, positions in matched.items():
-                value = selection[name]
-                count = len(value) if isinstance(value, (list, tuple)) else 1
-                if len(positions) != count:
-                    raise KeyError(f"selection for {name!r} is not covered by the supplied records")
-            if not yielded:
-                raise KeyError("selection matches no data in the supplied records")
+        _require_selection_coverage(selection, matched)
+        if not yielded:
+            raise KeyError("Selection matches no data")
 
 
 def open(

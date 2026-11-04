@@ -289,6 +289,46 @@ def test_text_format_declaration_controls_column_order(tmp_path):
         np.testing.assert_allclose(raw.lon, [116.4])
 
 
+@pytest.mark.parametrize(
+    "declaration, fixed_metadata",
+    [
+        ("observation_diamond_flat", False),
+        ("observation_diamond_flat", True),
+        ("climatology_station_probability", False),
+    ],
+)
+def test_station_tables_use_common_selection(tmp_path, declaration, fixed_metadata):
+    probability = declaration == "climatology_station_probability"
+    for hour, station in ((6, 54511), (12, 54512)):
+        filename = f"0101{hour:02d}.000" if probability else f"20250101{hour:02d}.000"
+        content = (
+            f"{station} 0.9 0.6 0.3 0.1\n" if probability else
+            f"diamond 3 station\n2025 01 01 {hour}\n{station} 120 30 10 3\n"
+        )
+        (tmp_path / filename).write_text(content, encoding="gbk")
+    source = io.open(tmp_path, source_config(declaration))
+    options = {"fixed_station_metadata": fixed_metadata}
+    with source.read(selection={"station": [54512, 54511]}, **options) as result:
+        assert result.station.values.tolist() == [54512, 54511]
+    with source.read(selection={"station": 54511}, **options) as result:
+        assert result.sizes["station"] == 1
+        assert result.station.values.tolist() == [54511]
+    parts = [
+        part.load() for part in source.iter_datasets(
+            selection={"station": [54512, 54511]}, **options
+        )
+    ]
+    assert [part.station.values.tolist() for part in parts] == [[54511], [54512]]
+    with pytest.raises(KeyError, match="labels not found"):
+        source.read(selection={"station": [54511, 99999]}, **options)
+    with pytest.raises(KeyError, match="labels not found"):
+        list(source.iter_datasets(selection={"station": [54511, 99999]}, **options))
+    with pytest.raises(KeyError, match="contains no labels"):
+        source.read(selection={"station": []}, **options)
+    with pytest.raises(TypeError, match="stations"):
+        source.read(all_files=True, stations=[54511], **options)
+
+
 def test_fengqing_file_groups_and_evaluation_units(tmp_path):
     directory = tmp_path / "20250101"
     directory.mkdir()
@@ -479,6 +519,241 @@ def test_layout_write_preflights_all_targets_and_allows_explicit_replacement(tmp
         assert restored.temperature.values.ravel().tolist() == [1, 2]
 
 
+def test_layout_write_projects_variables_space_members_and_leads(tmp_path):
+    root = tmp_path / "input"
+    expected = None
+    for member in (0, 1):
+        directory = root / "20250101" / f"member_{member}"
+        directory.mkdir(parents=True)
+        for lead in (1, 2):
+            data = xr.Dataset(
+                {"a": (("lat", "lon"), np.arange(6).reshape(3, 2) + 100 * member + 10 * lead),
+                 "b": (("lat", "lon"), np.ones((3, 2)))},
+                coords={"lat": [30.0, 31.0, 32.0], "lon": [120.0, 121.0]},
+                attrs={"title": "fixture"},
+            )
+            data.to_netcdf(directory / f"{lead:03d}.nc")
+            if member == 1 and lead == 2:
+                expected = data[["a"]].sel(lat=[31.0, 30.0], lon=[120.0])
+    description = source_config("forecast_fuxi_ensemble")
+    output = tmp_path / "output"
+    with io.open(root, description).read(all_files=True) as raw:
+        selected = raw[["a"]].sel(member=[1], lead_time=[12], lat=[31.0, 30.0], lon=[120.0])
+        paths = io.open(output, description).write(selected)
+    assert paths == [str(output / "20250101" / "member_1" / "002.nc")]
+    assert len(list(output.rglob("*.nc"))) == 1
+    with io.open(paths[0]).read() as restored:
+        xr.testing.assert_equal(restored, expected)
+
+
+def test_layout_write_restores_only_source_dimensions_and_scalar_coordinates(tmp_path):
+    root = tmp_path / "input"
+    originals = {}
+    for day in (1, 2):
+        directory = root / f"2025010{day}"
+        directory.mkdir(parents=True)
+        moment = np.datetime64(f"2025-01-0{day}", "ns")
+        original = xr.Dataset(
+            {"a": (("record_time", "lat"), [[1.0, 2.0]]), "static": ("lat", [3.0, 4.0])},
+            coords={"record_time": [moment], "lat": [30.0, 31.0], "init_time": moment},
+        )
+        original.to_netcdf(directory / "001.nc")
+        originals[day] = original
+    description = get_description(source_config("forecast_fuxi"))
+    description["structure"] = {"record_dimensions": ["record_time"]}
+    with io.open(root, description).read(all_files=True) as raw:
+        selected = raw.sel(init_time=["2025-01-02"], lat=[31.0])
+        paths = io.open(tmp_path / "output", description).write(selected)
+        with io.open(paths[0]).read() as restored:
+            xr.testing.assert_equal(restored, originals[2].sel(lat=[31.0]))
+            assert restored.static.dims == ("lat",)
+            assert restored.init_time.ndim == 0
+        paths = io.open(tmp_path / "static", description).write(selected[["static"]])
+        with io.open(paths[0]).read() as restored:
+            xr.testing.assert_equal(restored, originals[2].drop_vars("a").sel(lat=[31.0]))
+        with pytest.raises(ValueError, match="conflicts with the file record"):
+            io.open(tmp_path / "invalid_time", description).write(
+                raw.assign_coords(record_time=np.datetime64("2025-01-01", "ns"))
+            )
+        assert not (tmp_path / "invalid_time").exists()
+
+
+def test_layout_write_uses_sparse_source_membership_without_inventing_records(tmp_path):
+    root = tmp_path / "input"
+    for member, lead in ((0, 1), (1, 2)):
+        directory = root / "20250101" / f"member_{member}"
+        directory.mkdir(parents=True)
+        xr.Dataset({"a": ("lat", [float(lead)])}, coords={"lat": [30.0]}).to_netcdf(directory / f"{lead:03d}.nc")
+    description = source_config("forecast_fuxi_ensemble")
+    frames, manifest = [], []
+    for part in io.open(root, description).iter_datasets(all_files=True):
+        frames.append(part.load())
+        manifest.extend(part.encoding["dataset_io_manifest"])
+    # Explicit outer assembly creates padding cells; source records still own only two files.
+    with xr.combine_by_coords(frames, join="outer") as raw:
+        raw.encoding["dataset_io_manifest"] = manifest
+        output = tmp_path / "full"
+        paths = io.open(output, description).write(raw)
+        assert {Path(path).relative_to(output).as_posix() for path in paths} == {
+            "20250101/member_0/001.nc", "20250101/member_1/002.nc",
+        }
+        paths = io.open(tmp_path / "only_a", description).write(raw[["a"]])
+        assert len(paths) == 2
+        with pytest.raises(ValueError, match="No data remains"):
+            io.open(tmp_path / "none", description).write(raw[["a"]].sel(member=[1], lead_time=[6]))
+
+
+def test_layout_write_skips_variable_groups_that_were_removed(tmp_path):
+    root = tmp_path / "input" / "20250101"
+    root.mkdir(parents=True)
+    for group, variable in (("PLEVELS", "Z500"), ("SURFACE", "T2M")):
+        xr.Dataset({variable: (("member", "lat"), [[100.0]])}, coords={"member": [0], "lat": [30.0]}).to_netcdf(
+            root / f"Fengqing_1.0_GLB_{group}_OP25_6HOR_ENS_FCST_2025010100_006.nc"
+        )
+    description = source_config("forecast_fengqing")
+    with io.open(root.parent, description).read(all_files=True) as raw:
+        paths = io.open(tmp_path / "output", description).write(raw[["Z500"]])
+        assert len(paths) == 1 and "PLEVELS" in paths[0]
+        with io.open(paths[0]).read() as restored:
+            assert set(restored.data_vars) == {"Z500"}
+            assert restored.Z500.dims == ("member", "lat")
+        output = io.open(tmp_path / "complete", description)
+        original_paths = [Path(path) for path in output.write(raw)]
+        before = {path: path.read_bytes() for path in original_paths}
+        invalid = raw.assign(Z500=raw.Z500 + 10, T2M=raw.T2M.expand_dims(extra=[0]))
+        with pytest.raises(ValueError, match="Cannot restore source dimensions"):
+            output.write(invalid, mode="w")
+        assert {path: path.read_bytes() for path in original_paths} == before
+
+
+@pytest.mark.parametrize("change", ["variable", "rename", "coordinate", "missing_coordinate", "dimension", "empty"])
+def test_layout_write_rejects_unassignable_changes_before_replacing_any_file(tmp_path, change):
+    root = tmp_path / "input" / "20250101"
+    root.mkdir(parents=True)
+    for i in (1, 2):
+        xr.Dataset({"a": ("lat", [1.0, 2.0]), "b": ("lat", [3.0, 4.0])}, coords={"lat": [30.0, 31.0]}).to_netcdf(root / f"{i:03d}.nc")
+    description = source_config("forecast_fuxi")
+    output = io.open(tmp_path / "output", description)
+    with io.open(root.parent, description).read(all_files=True) as raw:
+        paths = [Path(path) for path in output.write(raw)]
+        before = {path: path.read_bytes() for path in paths}
+        if change == "variable":
+            selected = raw.assign(new=raw.a)
+        elif change == "rename":
+            selected = raw.rename(a="renamed")
+        elif change == "coordinate":
+            selected = raw.assign_coords(lat=[30.0, 999.0])
+        elif change == "missing_coordinate":
+            selected = raw.drop_vars("lat")
+        elif change == "dimension":
+            selected = raw.expand_dims(extra=[0])
+        else:
+            selected = raw.isel(lead_time=slice(0, 0))
+        with pytest.raises(ValueError):
+            output.write(selected, mode="w")
+        assert {path: path.read_bytes() for path in paths} == before
+        with pytest.raises(ValueError):
+            io.open(tmp_path / "fresh", description).write(selected)
+        assert not (tmp_path / "fresh").exists()
+
+
+def test_fixed_single_output_can_store_transformed_dataset_without_source_routing(tmp_path):
+    root = tmp_path / "input" / "20250101"
+    root.mkdir(parents=True)
+    for i in (1, 2):
+        xr.Dataset({"a": ("lat", [float(i)])}, coords={"lat": [30.0]}).to_netcdf(root / f"{i:03d}.nc")
+    target = {"name": "single", "layout": {"filename": "all.nc"}, "example": "all.nc"}
+    with io.open(root.parent, source_config("forecast_fuxi")).read(all_files=True) as raw:
+        selected = raw.rename(a="new").assign_coords(lat=[99.0])
+        paths = io.open(tmp_path / "output", target).write(selected)
+        with io.open(paths[0]).read() as restored:
+            xr.testing.assert_equal(restored, selected)
+
+
+def test_diamond_layout_write_filters_times_and_stations_and_restores_row_order(tmp_path):
+    root = tmp_path / "input"
+    root.mkdir()
+    for hour in (6, 12):
+        (root / f"20250101{hour:02d}.000").write_text(
+            f"diamond 3 station\n2025 01 01 {hour}\n54512 121 31 20 6\n54511 120 30 10 3\n",
+            encoding="gbk",
+        )
+    description = source_config("observation_diamond_flat")
+    output = io.open(tmp_path / "output", description)
+    with io.open(root, description).read(all_files=True) as raw:
+        selected = raw.sel(time=["2025-01-01T12:00"], station=[54511, 54512])
+        paths = output.write(selected)
+        assert [Path(path).name for path in paths] == ["2025010112.000"]
+        with output.read(all_files=True) as restored:
+            xr.testing.assert_equal(restored, selected.sel(station=[54512, 54511]))
+        with pytest.raises(ValueError, match="Required text columns"):
+            output.write(selected.drop_vars("lat"), mode="w")
+        with pytest.raises(ValueError, match="New coordinate"):
+            output.write(selected.assign_coords(station=[54511, 99999]), mode="w")
+
+
+def test_probability_layout_write_filters_records_but_preserves_threshold_columns(tmp_path):
+    root = tmp_path / "input"
+    root.mkdir()
+    for cycle in ("010106", "010112"):
+        (root / f"{cycle}.000").write_text("54511 0.9 0.6 0.3 0.1\n54512 0.8 0.5 0.2 0.0\n")
+    description = source_config("climatology_station_probability")
+    output = io.open(tmp_path / "output", description)
+    with io.open(root, description).read(all_files=True) as raw:
+        selected = raw.sel(cycle_time=["010112"], station=[54512], threshold=list(reversed(raw.threshold.values)))
+        paths = output.write(selected)
+        assert [Path(path).name for path in paths] == ["010112.000"]
+        with output.read(all_files=True) as restored:
+            xr.testing.assert_equal(restored, selected.sel(threshold=raw.threshold.values))
+        with pytest.raises(ValueError, match="every declared threshold"):
+            output.write(selected.isel(threshold=[0, 1]), mode="w")
+
+
+def test_babj_layout_write_filters_rows_and_skips_empty_files(tmp_path):
+    root = tmp_path / "input"
+    root.mkdir()
+    for storm in (2501, 2502):
+        (root / f"babj{storm}.dat").write_text(
+            f"diamond 7\nTEST {storm}\nheader\n2025 1 1 0 0 120 20 990 30\n2025 1 1 0 6 121 21 985 35\n",
+            encoding="gbk",
+        )
+    description = source_config("observation_babj")
+    output = io.open(tmp_path / "output", description)
+    with io.open(root, description).read(all_files=True) as raw:
+        selected = raw.sel(record=[3])
+        paths = output.write(selected)
+        assert [Path(path).name for path in paths] == ["babj2502.dat"]
+        with output.read(all_files=True) as restored:
+            assert restored.lead_time.values.tolist() == [6]
+            assert restored.storm.values.tolist() == ["2502"]
+            assert restored.lon.values.tolist() == [121]
+        with pytest.raises(ValueError, match="Required BABJ columns"):
+            output.write(selected.drop_vars("pmin"), mode="w")
+        with pytest.raises(ValueError, match="New coordinate"):
+            output.write(selected.assign_coords(record=[99]), mode="w")
+        with pytest.raises(ValueError, match="header coordinate"):
+            output.write(selected.assign_coords(storm=("record", ["changed"])), mode="w")
+
+
+def test_babj_checks_later_file_columns_before_publishing_first_file(tmp_path):
+    root = tmp_path / "input"
+    root.mkdir()
+    for storm, extra in ((2501, ""), (2502, " 7")):
+        (root / f"babj{storm}.dat").write_text(
+            f"diamond 7\nTEST {storm}\nheader\n2025 1 1 0 0 120 20 990 30{extra}\n",
+            encoding="gbk",
+        )
+    description = source_config("observation_babj")
+    output = io.open(tmp_path / "output", description)
+    with io.open(root, description).read(all_files=True) as raw:
+        paths = [Path(path) for path in output.write(raw)]
+        before = {path: path.read_bytes() for path in paths}
+        invalid = raw.assign(pmin=raw.pmin + 1).drop_vars("column_9")
+        with pytest.raises(ValueError, match="Required BABJ columns"):
+            output.write(invalid, mode="w")
+        assert {path: path.read_bytes() for path in paths} == before
+
+
 @pytest.mark.parametrize(
     "declaration, filename, content",
     [
@@ -496,6 +771,20 @@ def test_text_write_replacement_and_failure_preserve_output(
     root.mkdir()
     (root / filename).write_text(content, encoding="gbk")
     description = source_config(declaration)
+    from datakit.io.backends import babj, station_tables
+
+    codec = babj if declaration == "observation_babj" else station_tables
+    native, metadata = codec.read_file(root / filename, get_layout(description))
+    # A physical format adapter needs no collection path or filename fields.
+    assert "dataset_io_manifest" not in native.encoding
+    assert not {"filename", "fields", "records"} & metadata.keys()
+    assert "time" not in native.dims and "cycle_time" not in native.dims
+    if codec is babj:
+        assert native.record.values.tolist() == [0]
+    standalone = tmp_path / "single.payload"
+    codec.write_file(native, standalone, get_layout(description), metadata)
+    restored, _ = codec.read_file(standalone, get_layout(description))
+    xr.testing.assert_equal(restored, native)
     output = io.open(tmp_path / "output", description)
     with io.open(root, description).read(all_files=True) as data:
         paths = [Path(path) for path in output.write(data)]
@@ -503,6 +792,11 @@ def test_text_write_replacement_and_failure_preserve_output(
         with pytest.raises(FileExistsError):
             output.write(data)
         output.write(data, mode="w")
+        assert {path: path.read_bytes() for path in paths} == original
+        with pytest.raises(TypeError, match="options are not supported"):
+            output.write(data, mode="w", unknown_option=True)
+        with pytest.raises(TypeError, match="options are not supported"):
+            io.open(root, description).read(all_files=True, unknown_option=True)
         assert {path: path.read_bytes() for path in paths} == original
         with pytest.raises(ValueError, match="active IO source"):
             io.open(root, description).write(data, mode="w")
@@ -566,6 +860,160 @@ def test_records_freeze_discovery_and_apply_selection_without_scanning(tmp_path,
     records[0].path.unlink()
     with pytest.raises(FileNotFoundError):
         source.read(records=records)
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("labels", [1, [1], (1,), np.array([1]), np.array(1)])
+def test_selection_preserves_dimensions_for_scalars_and_sequences(tmp_path, explicit, labels):
+    path = tmp_path / "field.nc"
+    data = xr.Dataset({"value": ("x", [10, 20])}, coords={"x": [0, 1]})
+    io.open(path).write(data)
+    source = io.open(path)
+    options = {"records": source.discover()} if explicit else {}
+    with source.read(selection={"x": labels}, **options) as selected:
+        assert selected.sizes == {"x": 1}
+        assert selected.value.values.tolist() == [20]
+    parts = [part.load() for part in source.iter_datasets(selection={"x": labels}, **options)]
+    assert len(parts) == 1
+    assert parts[0].sizes == {"x": 1}
+    assert parts[0].value.values.tolist() == [20]
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("labels", [[], [9], [0, 9], slice(9, 10)])
+def test_selection_rejects_empty_and_missing_labels_and_releases_sources(tmp_path, explicit, labels):
+    path = tmp_path / "field.nc"
+    data = xr.Dataset({"value": ("x", [10, 20])}, coords={"x": [0, 1]})
+    io.open(path).write(data)
+    source = io.open(path)
+    options = {"records": source.discover()} if explicit else {}
+    with pytest.raises(KeyError):
+        source.read(selection={"x": labels}, **options)
+    consumed = []
+    with pytest.raises(KeyError):
+        for part in source.iter_datasets(selection={"x": labels}, **options):
+            consumed.extend(part.value.values.tolist())
+    assert consumed == ([10] if labels == [0, 9] else [])
+    io.open(path).write(data, mode="w")
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("with_variable", [False, True])
+def test_readers_reject_empty_datasets_without_selection(tmp_path, explicit, with_variable):
+    path = tmp_path / "empty.nc"
+    data = xr.Dataset({"value": ("x", [])}) if with_variable else xr.Dataset()
+    io.open(path).write(data)
+    source = io.open(path)
+    options = {"records": source.discover()} if explicit else {}
+    with pytest.raises(KeyError, match="no data"):
+        source.read(**options)
+    with pytest.raises(KeyError, match="no data"):
+        list(source.iter_datasets(**options))
+    io.open(path).write(xr.Dataset({"value": ("x", [1])}), mode="w")
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("calendar", ["standard", "360_day"])
+def test_time_labels_are_exact_and_ranges_require_slices(tmp_path, explicit, calendar):
+    path = tmp_path / "time.nc"
+    day, next_day = ("2025-01-01", "2025-01-02")
+    times = np.array([
+        "2025-01-01T00:00", "2025-01-01T12:00", "2025-01-02T12:00",
+    ], dtype="datetime64[ns]")
+    if calendar == "360_day":
+        pytest.importorskip("cftime")
+        day, next_day = "2025-02-30", "2025-03-01"
+        times = xr.date_range(day, periods=4, freq="12h", calendar=calendar, use_cftime=True)[[0, 1, 3]]
+    data = xr.Dataset(
+        {"value": ("time", [1, 2, 3])},
+        coords={"time": times},
+    )
+    io.open(path).write(data)
+    source = io.open(path)
+    options = {"records": source.discover()} if explicit else {}
+    for label in (day, [day]):
+        with source.read(selection={"time": label}, **options) as selected:
+            assert selected.sizes == {"time": 1}
+            assert selected.value.values.tolist() == [1]
+        parts = [part.load() for part in source.iter_datasets(selection={"time": label}, **options)]
+        assert parts[0].value.values.tolist() == [1]
+    with source.read(selection={"time": slice(day, day + "T23:59")}, **options) as selected:
+        assert selected.value.values.tolist() == [1, 2]
+    with pytest.raises(KeyError):
+        source.read(selection={"time": next_day}, **options)
+    with pytest.raises(KeyError):
+        list(source.iter_datasets(selection={"time": next_day}, **options))
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_label_coverage_is_checked_across_partitions(tmp_path, explicit):
+    directory = tmp_path / "20250101"
+    directory.mkdir()
+    for i in (1, 2):
+        xr.Dataset({"temperature": ("lat", [float(i)])}).to_netcdf(directory / f"{i:03d}.nc")
+    source = io.open(tmp_path, source_config("forecast_fuxi"))
+    options = {"records": source.discover(all_files=True)} if explicit else {}
+    parts = [
+        part.load() for part in source.iter_datasets(selection={"lead_time": [6, 12]}, **options)
+    ]
+    assert [part.temperature.values.item() for part in parts] == [1, 2]
+    with source.read(selection={"lead_time": 12}, **options) as selected:
+        assert selected.sizes["lead_time"] == 1
+    with pytest.raises(KeyError):
+        source.read(selection={"lead_time": [6, 18]}, **options)
+    with pytest.raises(KeyError):
+        list(source.iter_datasets(selection={"lead_time": [6, 18]}, **options))
+
+
+def test_selection_and_missing_label_checks_do_not_load_data(tmp_path):
+    import dask.array as da
+    from dask import delayed
+
+    @delayed
+    def unexpected_load():
+        raise AssertionError("selection must not load data values")
+
+    dataset = xr.Dataset(
+        {"value": ("x", da.from_delayed(unexpected_load(), shape=(2,), dtype="f8"))},
+        coords={"x": [0, 1]},
+    )
+
+    class Backend:
+        @staticmethod
+        def read_records(*args, **kwargs):
+            return dataset.copy(deep=False)
+
+    path = tmp_path / "field.nc"
+    path.touch()
+    source = io.open(path, backend=Backend())
+    with source.read(selection={"x": 1}) as selected:
+        assert selected.value.chunks is not None
+        assert selected.sizes == {"x": 1}
+    with pytest.raises(KeyError):
+        source.read(selection={"x": [1, 9]})
+    with pytest.raises(KeyError):
+        list(source.iter_datasets(selection={"x": [1, 9]}))
+    io.open(path).write(xr.Dataset({"value": ("x", [1, 2])}), mode="w")
+
+
+@pytest.mark.parametrize("suffix", [".npy", ".npz", ".nc", ".zarr"])
+def test_unknown_format_options_never_publish_or_replace_outputs(tmp_path, suffix):
+    data = xr.Dataset({"value": ("x", [1, 2])})
+    path = tmp_path / ("existing" + suffix)
+    io.open(path).write(data, compute=True)
+    fresh = tmp_path / ("fresh" + suffix)
+    for target in (path, fresh):
+        with pytest.raises(TypeError):
+            io.open(target).write(data + 10, mode="w", unknown_option=True)
+    assert not fresh.exists()
+    options = {"dims": ("x",), "name": "value"} if suffix in (".npy", ".npz") else {}
+    with io.open(path).read(**options) as restored:
+        xr.testing.assert_equal(restored, data)
+    with pytest.raises(TypeError):
+        io.open(path).read(unknown_option=True)
+    if suffix in (".npy", ".npz", ".zarr"):
+        with pytest.raises(TypeError, match="only for NetCDF"):
+            io.open(path).read(engine_fallback="h5netcdf")
 
 
 def test_record_validation_and_partition_combination_do_not_own_or_load_inputs(tmp_path):

@@ -1,1 +1,1 @@
-"""共享文件、文件集合和站点文本读写；调用方直接选择所需模块。"""
+"""Internal layout orchestration and single-file format adapters."""

@@ -130,6 +130,8 @@ def write_file(dataset, path, options):
     options = dict(options)
     mode = write_mode(options)
     format_name = normalize_format(options.pop("format", None) or infer_format(path))
+    if format_name == "numpy" and options:
+        raise TypeError(f"NumPy write options are not supported: {sorted(options)}")
     with staged_output(path, mode) as staged:
         _write_file(dataset, staged, format_name, options)
     return str(path)
@@ -193,7 +195,11 @@ def open_xarray(path, **options):
         format_name = normalize_format(options.pop("format", None) or _detect_format(path))
         fallback = options.pop("engine_fallback", None)
         variable = options.pop("variable", None)
+        if fallback is not None and format_name != "netcdf":
+            raise TypeError("engine_fallback is supported only for NetCDF")
         if format_name == "numpy":
+            if variable is not None and "key" in options:
+                raise TypeError("Use variable or key for NumPy reads, not both")
             key = options.pop("key", variable)
             options.setdefault("name", key or "data")
             yield read_numpy(path, key=key, **options).to_dataset()

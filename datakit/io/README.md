@@ -39,8 +39,9 @@ with source.read(selection={"init_time": ["2025-01-01"], "lead_time": [6]}) as r
 
 `FileRecord` 保存路径与解析字段，不包含评估角色、变量映射或有效时间推导。
 `read()` 和 `iter_datasets()` 都可接收已筛选的记录。记录不能为空或重复；
-`selection` 只作用于这批文件。迭代允许单个分区不含某个请求标签，但完整消费迭代器后，
-若请求标签仍未被覆盖则报错；提前结束时调用 `close()` 或使用 `contextlib.closing()`。
+`selection` 只作用于这批文件。无论自动发现还是显式 records，整体空结果和缺失请求标签均报错。
+迭代允许单个分区不含某个请求标签，完整消费后检查标签覆盖；
+提前结束时调用 `close()` 或使用 `contextlib.closing()`，且不能据此判断完整请求已满足。
 
 ```python
 records = source.discover(selection={"init_time": ["2025-01-01"], "lead_time": [6]})
@@ -53,8 +54,12 @@ with source.read(records=records) as raw:
 不读取文件、不主动加载数据、不关闭输入句柄。调用方应在源关闭前消费或加载组合结果。
 
 `selection` 使用源坐标名，例如 `time`、`init_time`、`member`、`lead_time`。
-读取时的同名条件覆盖构造时条件。精确时间使用 datetime 或 ISO 字符串列表，
-路径中的已知字段先用于定位文件；剩余条件由 xarray 筛选。
+站点使用 `selection={"station": [54511]}`；文本后端不提供单独的 `stations` 参数。
+读取时的同名条件覆盖构造时条件。标量与单元素列表等价，都保留长度为 1 的维度。
+标量和列表均按精确标签匹配，时间可用 datetime 或 ISO 字符串；
+`"2025-01-01"` 选择当天 00:00，不隐式匹配整天。时间范围显式使用 slice。
+非标准日历的字符串按数据索引自身的日历解释，不转成公历。
+路径中的已知字段先用于定位文件，剩余条件按坐标筛选，不加载主数据数组来检查标签。
 slice 条件目前只在打开后筛选，不能缩小目录扫描范围。
 多文件布局无条件读取须显式指定 `all_files=True`；单文件和 Zarr 可直接读取。
 多文件数组默认 Dask 惰性访问；单文件使用 xarray 自身的惰性读取，不默认创建 Dask 分块。
@@ -77,21 +82,53 @@ IO 持有的读取上下文尚未关闭时，禁止写入对应源路径、其�
 写回源布局不反向执行变量映射或单位转换，特殊格式可能要求读取时保留的元数据。
 Zarr 使用 xarray/Zarr 的默认写入行为；压缩可通过 encoding 指定。
 NPY/NPZ 只写数组值，不保存 xarray 的维度名、坐标和属性；读取时可显式提供 dims 和 coords。
+IO 消费 mode、format、compute 等通用写出参数，compute 只允许 True，写出不返回延迟任务。
+NumPy 写出不支持其他参数，文本等自定义分支同样拒绝未识别参数。
+NetCDF、Zarr、GRIB 的原生参数继续交给后端校验；engine_fallback 仅用于 NetCDF 读取。
+
+## 筛选后按布局写出
+
+```python
+with source.read(selection={"init_time": ["2025-01-01"]}) as raw:
+    selected = raw[["t2m"]].sel(lead_time=[6], lat=slice(40, 20))
+    paths = io.open("/data/subset", io.source_config("forecast_fuxi")).write(selected)
+```
+
+读取清单记录源文件的归属；写出时根据当前 Dataset 重新生成计划。
+删除变量、筛选时间／成员／时效、裁剪或重排空间坐标后，只写出仍有数据的文件和变量分组。
+数组保留当前坐标顺序，并恢复源文件原有的维度结构；IO 附加的路径维度不会写进正文。
+源清单没有的记录不会因组合结果中的填充单元而生成新文件。
+
+沿用源布局时，新增或重命名变量、新增坐标标签，以及无法恢复的结构变更会明确报错。
+不要删除确定文件归属所需的坐标。需要存储任意加工结果时，可指定固定单文件目标布局，
+或直接写入一个 NetCDF／Zarr，使用当前 Dataset 的结构。
+Diamond、概率表和 BABJ 支持筛选记录或站点，按源格式恢复行列顺序并保留表头；
+必需列和概率阈值集合必须完整，BABJ 表头对应的台风标识不能更改。
+
+全部文件的结构、归属和输出路径检查在开始写出前完成；整体没有可写数据时报错。
+编码或底层存储错误仍可能发生在实际写入阶段，多文件发布遵循上述逐文件规则。
 
 ## 结构与边界
 
 | 位置 | 职责 |
 | --- | --- |
-| `dataset.py` | 访问对象、读取条件和后端调用 |
+| `dataset.py` | 访问对象、统一筛选、读取上下文和自定义后端接口 |
 | `_layout.py` | 显式布局校验、可逆路径模板 |
 | `records.py` | 公开文件记录类型 |
 | `combination.py` | 分区坐标附加、结构一致性检查与组合 |
 | `backends/files.py` | 格式识别、单文件或 Store 读写 |
-| `backends/_writing.py` | 本地写出保护、临时产物发布和覆盖恢复 |
-| `backends/file_collection.py` | 文件发现、路径字段解析、分区读取和布局写回 |
-| `backends/station_tables.py` | Diamond 文本和概率表格式读写 |
-| `backends/babj.py` | BABJ 台风报文及源表头保留写回 |
+| `backends/_writing.py` | 源记录筛选投影、本地写出保护、临时产物发布和覆盖恢复 |
+| `backends/file_collection.py` | 内置集合访问入口、文件发现、数组分区组合和布局写回 |
+| `backends/_text_collection.py` | 文本集合组合、全局记录编号、来源清单和写出规划 |
+| `backends/station_tables.py` | 单个 Diamond／概率表的解析、格式恢复和序列化 |
+| `backends/babj.py` | 单个 BABJ 报文的解析、表头恢复和序列化 |
 | `config/data_sources/` | 文件组织说明、可选映射及数据集专属入口 |
+
+内置访问按“访问接口 → 布局编排 → 单文件格式处理”组织。
+格式模块的 `read_file()` 返回单文件 Dataset 和格式元数据；
+`prepare_file()` 恢复格式所需的顺序并检查结构，`write_file()` 写入布局层提供的临时路径。
+格式模块不发现文件、不分配跨文件编号、不决定输出路径；集合层在所有文件预检查后调度发布。
+站点、台风和网格保留各自的组合规则，契约仍使用现有 `format`、`layout` 字段。
 
 `io.open(path, description=...)` 接受描述字典或 YAML 路径。具体源格式由声明和后端决定，
 YAML 用 `format: grib` 等标量或 `format: {name: grib}` 映射描述格式，

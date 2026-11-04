@@ -16,7 +16,11 @@ import pandas as pd
 from .._layout import templates
 from ..combination import combine_partitions
 from ..records import FileRecord
-from ._writing import check_outputs, write_mode
+from . import _text_collection, files
+from ._writing import (
+    check_outputs, check_source_coordinates, check_source_variables,
+    project_coordinates, write_mode,
+)
 from .files import open_xarray, write_file
 
 
@@ -137,6 +141,10 @@ def _is_store(path):
 
 def read_records(records, description, **options):
     """读取已发现的文件记录，供统一入口和逐文件处理复用。"""
+    if description.get("format", {}).get("name") in _text_collection.FORMATS:
+        return _text_collection.read_records(records, description, **options)
+    if not description["layout"] and len(records) == 1 and not records[0].fields:
+        return files.read_records(records, description, **options)
     from .files import declared_open_options
 
     options = declared_open_options(description, options)
@@ -172,6 +180,10 @@ def _output_records(dataset, description, patterns):
             "A discovery pattern cannot define output names; supply a complete filename template"
         )
     fields = {field for _, template in patterns for field, _, _ in template.fields}
+    # A fixed filename explicitly writes one current Dataset, without source routing.
+    if len(patterns) == 1 and not fields and not description.get("structure", {}).get("record_dimensions"):
+        yield {"fields": {}, "variables": list(dataset.data_vars), "dimensions": {}, "added": []}
+        return
     if manifest and all(fields.issubset(record["fields"]) for record in manifest):
         yield from manifest
         return
@@ -183,6 +195,9 @@ def _output_records(dataset, description, patterns):
             raise ValueError(
                 "This output layout requires file grouping metadata from read(); arbitrary Xarray data needs an explicit output description"
             )
+        missing = set().union(*(fields - record["fields"].keys() for record in manifest))
+        if missing:
+            raise ValueError(f"Output layout fields have no source assignment: {sorted(missing)}")
         yield from manifest
         return
     dimensions = [
@@ -217,13 +232,92 @@ def _output_records(dataset, description, patterns):
         }
 
 
+def _record_selectors(record):
+    selectors = dict(record.get("indexes", {}))
+    for dim in (*record["added"], *record.get("expanded", [])):
+        selectors[dim] = [record["fields"][dim]]
+    return selectors
+
+
+def _project_record(dataset, record):
+    variables = [name for name in dataset.data_vars if name in record["variables"]]
+    if not variables:
+        return None
+    part = dataset[variables]
+    original_dimensions = set().union(*(
+        set(record.get("variable_dims", {}).get(name, part[name].dims))
+        for name in variables
+    ))
+    selectors = {}
+    for dim in (*record["added"], *record.get("expanded", [])):
+        selectors[dim] = [record["fields"][dim]]
+    selectors.update({
+        dim: labels for dim, labels in record.get("indexes", {}).items()
+        if dim in original_dimensions or dim in part.dims or dim in part.coords
+    })
+    scalar_coordinates = (
+        set(record.get("squeezed", []))
+        - set(record["added"])
+        - set(record.get("expanded", []))
+    )
+    part = project_coordinates(part, selectors, scalar_coordinates=scalar_coordinates)
+    if part is None:
+        return None
+    for dim in record["added"]:
+        if dim in part.dims:
+            part = part.isel({dim: 0}, drop=False)
+        if dim in part.coords:
+            part = part.drop_vars(dim)
+    for dim in record.get("expanded", []):
+        if dim in part.dims:
+            part = part.isel({dim: 0}, drop=False)
+    for name in variables:
+        if name not in record.get("variable_dims", {}):
+            continue
+        dimensions = record["variable_dims"][name]
+        value = part[name]
+        if set(value.dims) - set(dimensions):
+            raise ValueError(f"Cannot restore source dimensions for {name!r}; use an explicit output layout")
+        for dim in dimensions:
+            if dim not in value.dims:
+                if dim in part.coords and part[dim].ndim == 0:
+                    value = value.expand_dims(dim)
+                elif record["dimensions"][dim] == 1 and dim not in record.get("indexes", {}):
+                    value = value.expand_dims(dim)
+                else:
+                    raise ValueError(f"Cannot restore source dimension {dim!r} for {name!r}")
+        part[name] = value.transpose(*dimensions)
+    for dim in record["dimensions"]:
+        if dim not in part.dims and dim in part.coords and part[dim].ndim == 0:
+            part = part.assign_coords({dim: part[dim].expand_dims(dim)})
+    return part
+
+
 def write(dataset, root, description, **options):
     """按当前布局写出 Dataset，返回输出文件路径列表。"""
+    if description.get("format", {}).get("name") in _text_collection.FORMATS:
+        return _text_collection.write(dataset, root, description, **options)
+    if not description["layout"]:
+        return files.write(dataset, root, description, **options)
     mode = write_mode(options)
     patterns = templates(description)
     plans = []
     planned_paths = set()
-    for record in _output_records(dataset, description, patterns):
+    records = list(_output_records(dataset, description, patterns))
+    check_source_variables(dataset, (name for record in records for name in record["variables"]))
+    scalar_coordinates = {dim for record in records for dim in record.get("squeezed", [])}
+    check_source_coordinates(
+        dataset,
+        (_record_selectors(record) for record in records),
+        scalar_coordinates=scalar_coordinates,
+    )
+    for record in records:
+        part = _project_record(dataset, record)
+        if part is None:
+            continue
+        member_dimension = description.get("member", {}).get("dimension")
+        if member_dimension and member_dimension not in part.dims:
+            raise ValueError(f"Output layout requires member dimension {member_dimension!r}")
         fields = record["fields"]
         pattern = next(
             (
@@ -238,24 +332,12 @@ def write(dataset, root, description, **options):
         path = root / pattern.render(fields)
         if path in planned_paths:
             raise ValueError(f"Output paths collide: {path}")
-        # Slice only source-declared records, without synthesizing Cartesian cells.
-        part = dataset[record["variables"]]
-        for dim, labels in record.get("indexes", {}).items():
-            if dim in part.dims:
-                part = part.sel({dim: labels})
-        for dim in record["added"]:
-            if dim in part.coords:
-                part = part.sel({dim: fields[dim]}, drop=True)
-        # Restore dimensions removed only for structural forecast assembly.
-        for dim, size in record["dimensions"].items():
-            if dim not in part.dims and dim in part.coords and size == 1:
-                part = part.expand_dims(dim)
-        for name, dimensions in record.get("variable_dims", {}).items():
-            part[name] = part[name].transpose(*dimensions)
         planned_paths.add(path)
         plans.append((path, part))
     from .files import declared_open_options
 
+    if not plans:
+        raise ValueError("No data remains for the output layout")
     check_outputs([path for path, _ in plans], mode)
     options["mode"] = mode
     return [

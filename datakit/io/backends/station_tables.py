@@ -1,176 +1,82 @@
-"""Diamond 站点文本与站点气候概率表 ↔ Xarray Dataset。
-
-Diamond 输出：(time, station)，包含经纬度、海拔、降水和额外数值列。
-概率表输出：(cycle_time, station, threshold)，cycle_time 保留 MMDDHH 标签。
-文本立即加载；保留源数值和缺测哨兵，不做质量控制或时区转换。
-写回需要读取时保留的文件头、站点顺序等元数据。
-"""
-
+"""Single-file Diamond station and probability table parsing and serialization."""
 
 import numpy as np
 import xarray as xr
 
-from .._layout import templates
-from ._writing import check_outputs, staged_output, write_mode
 
-
-def read_records(records, description, **options):
-    """读取已发现的文件记录，供统一入口和逐文件处理复用。"""
-    stations = options.pop("stations", None)
-    fixed_metadata = options.pop("fixed_station_metadata", False)
-    tables = []
-    if options:
-        raise TypeError(f"Text table options are not supported: {sorted(options)}")
+def read_file(path, description):
+    """Return native station arrays and metadata needed to restore this file."""
     probability = "thresholds" in description
     file_format = description.get("format", {})
     columns = file_format.get(
         "columns", ["station", "lon", "lat", "altitude", "precipitation"]
     )
-    frames, manifest = [], []
-    for record in records:
-        skip = file_format.get("header_lines", 0 if probability else 2)
-        with record.path.open(encoding=file_format.get("encoding", "gbk")) as stream:
-            headers = [stream.readline() for _ in range(skip)]
-            rows = np.loadtxt(stream, ndmin=2)
-        minimum = len(description["thresholds"]) + 1 if probability else len(columns)
-        if (
-            rows.size == 0
-            or rows.shape[1] < minimum
-            or (probability and rows.shape[1] != minimum)
-        ):
-            raise ValueError(f"Invalid station table shape {rows.shape}: {record.path}")
-        if stations is not None:
-            rows = rows[np.isin(rows[:, 0], stations)]
-            if not len(rows):
-                continue
-        station = rows[:, 0]
-        if (
-            not np.all(np.isfinite(station))
-            or not np.all(station == station.astype("i8"))
-            or len(set(station)) != len(station)
-        ):
-            raise ValueError(f"Station IDs must be unique integers: {record.path}")
-        if fixed_metadata and not probability:
-            canonical = [
-                columns.index(name)
-                for name in ("station", "lon", "lat", "altitude", "precipitation")
-            ]
-            tables.append((record, headers, rows[:, canonical]))
-            continue
-        if probability:
-            dataset = xr.Dataset(
-                {"probability": (("station", "threshold"), rows[:, 1:])},
-                coords={
-                    "station": station.astype("i8"),
-                    "threshold": description["thresholds"],
-                },
-            )
-            axis = "cycle_time"
-        else:
-            names = columns[1:] + [
-                f"column_{i}" for i in range(len(columns), rows.shape[1])
-            ]
-            dataset = xr.Dataset(
-                {name: ("station", rows[:, i + 1]) for i, name in enumerate(names)},
-                coords={"station": station.astype("i8")},
-            )
-            axis = "time"
-        dataset = dataset.expand_dims({axis: [record.fields[axis]]})
-        frames.append(dataset)
-        manifest.append(
-            {
-                "fields": record.fields,
-                "headers": headers,
-                "stations": station.astype("i8"),
-                "columns": list(dataset.data_vars),
-            }
+    skip = file_format.get("header_lines", 0 if probability else 2)
+    with path.open(encoding=file_format.get("encoding", "gbk")) as stream:
+        headers = [stream.readline() for _ in range(skip)]
+        rows = np.loadtxt(stream, ndmin=2)
+    minimum = len(description["thresholds"]) + 1 if probability else len(columns)
+    if (
+        rows.size == 0
+        or rows.shape[1] < minimum
+        or (probability and rows.shape[1] != minimum)
+    ):
+        raise ValueError(f"Invalid station table shape {rows.shape}: {path}")
+    station = rows[:, 0]
+    if (
+        not np.all(np.isfinite(station))
+        or not np.all(station == station.astype("i8"))
+        or len(set(station)) != len(station)
+    ):
+        raise ValueError(f"Station IDs must be unique integers: {path}")
+    if probability:
+        dataset = xr.Dataset(
+            {"probability": (("station", "threshold"), rows[:, 1:])},
+            coords={"station": station.astype("i8"), "threshold": description["thresholds"]},
         )
-    if fixed_metadata and not probability:
-        return _station_collection(tables)
-    if not frames:
-        raise ValueError("No valid station data parsed")
-    labels = [frame[axis].values[0] for frame in frames]
-    if len(set(labels)) != len(labels):
-        raise ValueError(f"Duplicate {axis} records")
-    result = xr.concat(
-        frames, dim=axis, join="outer", coords="minimal", compat="equals"
-    ).sortby(axis)
-    result.encoding["dataset_io_manifest"] = manifest
-    return result
+    else:
+        names = columns[1:] + [f"column_{i}" for i in range(len(columns), rows.shape[1])]
+        dataset = xr.Dataset(
+            {name: ("station", rows[:, i + 1]) for i, name in enumerate(names)},
+            coords={"station": station.astype("i8")},
+        )
+    return dataset, {
+        "headers": headers,
+        "stations": station.astype("i8"),
+        "columns": list(dataset.data_vars),
+    }
 
 
-def write(dataset, root, description, **options):
-    """按当前布局写出 Dataset，返回输出文件路径列表。"""
-    mode = write_mode(options)
-    if options:
-        raise TypeError(
-            f"Text table write options are not supported: {sorted(options)}"
-        )
-    patterns = templates(description)
-    if len(patterns) != 1:
-        raise ValueError("Text writing requires one reversible filename template")
-    probability = "thresholds" in description
-    manifest = dataset.encoding.get("dataset_io_manifest")
-    if not manifest:
-        raise NotImplementedError(
-            "Text writing requires headers and record membership retained by read()"
-        )
-    plans = []
-    planned_paths = set()
-    axis = "cycle_time" if probability else "time"
-    for record in manifest:
-        path = root / patterns[0][1].render(record["fields"])
-        if path in planned_paths:
-            raise ValueError(f"Output paths collide: {path}")
-        part = dataset.sel(
-            {axis: record["fields"][axis], "station": record["stations"]}
-        )
-        values = (
-            part.probability.transpose("station", "threshold").values
-            if probability
-            else np.column_stack([part[name].values for name in record["columns"]])
-        )
-        rows = np.column_stack([record["stations"], values])
-        planned_paths.add(path)
-        plans.append((path, record["headers"], rows))
-    check_outputs([path for path, *_ in plans], mode)
-    for path, headers, rows in plans:
-        with staged_output(path, mode) as staged:
-            with staged.open(
-                "x", encoding=description.get("format", {}).get("encoding", "gbk")
-            ) as stream:
-                stream.writelines(headers)
-                np.savetxt(stream, rows, fmt="%.17g")
-    return [str(p) for p, *_ in plans]
+def prepare_file(dataset, description, metadata):
+    """Restore native row/column order and check format constraints before writing."""
+    missing = set(metadata["columns"]) - dataset.variables.keys()
+    if missing:
+        raise ValueError(f"Required text columns were removed: {sorted(missing)}")
+    if "station" not in dataset.dims:
+        dataset = dataset.expand_dims("station")
+    stations = metadata["stations"][np.isin(metadata["stations"], dataset.station.values)]
+    dataset = dataset.sel(station=stations)
+    if "thresholds" in description:
+        if "threshold" not in dataset.dims:
+            dataset = dataset.expand_dims("threshold")
+        if dataset.sizes["threshold"] != len(description["thresholds"]):
+            raise ValueError("Probability output requires every declared threshold")
+        dataset = dataset.sel(threshold=description["thresholds"])
+        if set(dataset.probability.dims) != {"station", "threshold"}:
+            raise ValueError("Probability output requires station and threshold dimensions")
+    elif any(dataset[name].dims != ("station",) for name in metadata["columns"]):
+        raise ValueError("Text columns must have one value per station")
+    return dataset
 
 
-def _station_collection(tables):
-    """Assemble bounded station columns; retain metadata at first appearance."""
-    if not tables:
-        raise ValueError("No valid station data parsed")
-    tables.sort(key=lambda item: item[0].fields["time"])
-    stations = np.unique(
-        np.concatenate([rows[:, 0].astype("i8") for _, _, rows in tables])
+def write_file(dataset, path, description, metadata):
+    """Serialize one prepared table to the supplied staging path."""
+    values = (
+        dataset.probability.transpose("station", "threshold").values
+        if "thresholds" in description
+        else np.column_stack([dataset[name].values for name in metadata["columns"]])
     )
-    times = [record.fields["time"] for record, _, _ in tables]
-    if len(set(times)) != len(times):
-        raise ValueError("Duplicate time records")
-    precipitation = np.full((len(tables), len(stations)), np.nan, dtype="f8")
-    metadata = np.full((3, len(stations)), np.nan, dtype="f8")
-    filled = np.zeros(len(stations), dtype=bool)
-    for position, (_, _, rows) in enumerate(tables):
-        indexes = np.searchsorted(stations, rows[:, 0].astype("i8"))
-        precipitation[position, indexes] = rows[:, 4]
-        first = ~filled[indexes]
-        metadata[:, indexes[first]] = rows[first, 1:4].T
-        filled[indexes] = True
-    return xr.Dataset(
-        {"precipitation": (("time", "station"), precipitation)},
-        coords={
-            "time": times,
-            "station": stations,
-            "lat": ("station", metadata[1]),
-            "lon": ("station", metadata[0]),
-            "altitude": ("station", metadata[2]),
-        },
-    )
+    rows = np.column_stack([dataset.station.values, values])
+    with path.open("x", encoding=description.get("format", {}).get("encoding", "gbk")) as stream:
+        stream.writelines(metadata["headers"])
+        np.savetxt(stream, rows, fmt="%.17g")

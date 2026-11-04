@@ -9,9 +9,62 @@ import threading
 from pathlib import Path
 from uuid import uuid4
 
+import numpy as np
+import pandas as pd
+
 
 _READERS = Counter()
 _LOCK = threading.Lock()
+
+
+def check_source_coordinates(dataset, sources, *, scalar_coordinates=()):
+    """Reject new labels rather than silently dropping them during projection."""
+    indexes = {}
+    for source in sources:
+        for name, labels in source.items():
+            index = pd.Index(np.atleast_1d(labels))
+            indexes[name] = indexes[name].union(index, sort=False) if name in indexes else index
+    for name, index in indexes.items():
+        if name not in dataset.coords:
+            continue
+        coordinate = dataset[name]
+        regular = coordinate.ndim == 0 or coordinate.dims == (name,)
+        if not regular and name not in scalar_coordinates:
+            raise ValueError(f"Cannot assign transformed coordinate {name!r} to source records")
+        current = pd.Index(np.asarray(coordinate.values).reshape(-1))
+        if coordinate.dims == (name,) and not current.is_unique:
+            raise ValueError(f"Duplicate output coordinate labels: {name!r}")
+        missing = current[~current.isin(index)]
+        if len(missing):
+            raise ValueError(f"New coordinate labels require an explicit output layout: {name!r}: {list(missing)!r}")
+
+
+def project_coordinates(dataset, selectors, *, scalar_coordinates=()):
+    """Intersect source membership with current coordinates, preserving current order."""
+    part = dataset
+    for name, labels in selectors.items():
+        if name not in part.coords:
+            raise ValueError(f"Source coordinate {name!r} was removed; cannot determine output membership")
+        coordinate = part[name]
+        index = pd.Index(np.asarray(coordinate.values).reshape(-1))
+        positions = np.flatnonzero(index.isin(np.atleast_1d(labels)))
+        if not len(positions):
+            if name in scalar_coordinates:
+                raise ValueError(f"Selected source coordinate {name!r} conflicts with the file record")
+            return None
+        if coordinate.ndim == 1 and coordinate.dims == (name,):
+            part = part.isel({name: positions})
+        elif coordinate.ndim != 0 and not (name in scalar_coordinates and coordinate.size == 1):
+            raise ValueError(f"Cannot project coordinate {name!r}")
+    if not part.data_vars or any(size == 0 for size in part.sizes.values()):
+        return None
+    return part
+
+
+def check_source_variables(dataset, variables):
+    unknown = set(dataset.data_vars) - set(variables)
+    if unknown:
+        raise ValueError(f"Variables have no source-file assignment: {sorted(unknown)}; use an explicit output layout")
 
 
 @contextmanager
@@ -33,7 +86,10 @@ def write_mode(options):
     mode = options.pop("mode", None)
     if mode not in (None, "w", "w-", "x"):
         raise ValueError("IO write supports creation or explicit replacement with mode='w'")
-    if options.get("compute") is False:
+    compute = options.pop("compute", True)
+    if not isinstance(compute, bool):
+        raise TypeError("compute must be a boolean")
+    if not compute:
         raise ValueError("write() executes the write; compute=False is not supported")
     return mode
 

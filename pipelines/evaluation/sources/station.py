@@ -80,10 +80,19 @@ class DiamondStationReader:
         try:
             with io.open(records[0].path.parent, self._layout).read(
                 records=records,
-                stations=self.station_whitelist,
                 fixed_station_metadata=True,
             ) as raw:
-                dataset = raw.load()
+                dataset = raw
+                if self.station_whitelist is not None:
+                    stations = raw.get_index("station").intersection(
+                        self.station_whitelist, sort=False
+                    )
+                    if stations.empty:
+                        raise DecodeError(
+                            "No valid station data parsed", source_id=request.source_id
+                        )
+                    dataset = raw.sel(station=stations)
+                dataset = dataset.load()
         except Exception as exc:
             raise DecodeError(str(exc), source_id=request.source_id, cause=exc) from exc
         dataset = dataset.assign_coords(station_id=("station", dataset.station.values))
