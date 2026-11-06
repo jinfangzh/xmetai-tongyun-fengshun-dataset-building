@@ -1,6 +1,6 @@
 # Paths on the SSH server.
 source: /home/xmetai/era5_download/era5_tongyun_c78/raw/daily
-download_status: /home/xmetai/era5_download/era5_tongyun_c78/raw/_records/tongyun_c78_daily/status.jsonl
+download_watermark: /home/xmetai/era5_download/era5_tongyun_c78/raw/_records/tongyun_c78_daily/watermark.json
 output_root: /home/xmetai/era5_download/era5_tongyun_c78/zarr
 report_dir: /home/xmetai/era5_download/era5_tongyun_c78/reports
 mean_nc: /home/xmetai/stats/tongyun_c78/mean.nc

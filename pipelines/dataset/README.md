@@ -127,7 +127,7 @@ report = validate_zarr(
 ```
 
 公开检查参数为 `mode`、`auxiliary_directory`、`sample_blocks`、`max_blocks`、`memory_budget_mib`、`stop_requested` 和 `on_block`。计数必须是正整数，内存预算须有限且至少为 1 MiB，回调须可调用；非法参数在读取契约和数据前拒绝。
-默认校验内存预算为 4096 MiB（4 GiB），构建完成后的 Quick 校验沿用此默认值；
+默认校验内存预算为 8192 MiB（8 GiB），构建完成后的 Quick 校验沿用此默认值；
 检查仍覆盖预计工作内存及进程当前驻留内存，不预先分配整份预算。
 
 默认 full，按 `release_passed` 判断通过；quick 按 `quick_passed` 判断。快速或中断的扫描不能授权完整发布。数值扫描、物理覆盖和证据完整性分别记录；`on_block`、`max_blocks`、`memory_budget_mib`、`stop_requested` 可控制扫描及中断。

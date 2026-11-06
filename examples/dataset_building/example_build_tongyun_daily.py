@@ -52,7 +52,7 @@ def main(argv=None):
     parser.add_argument("--source", required=True, type=Path, help="Downloader raw/daily root")
     parser.add_argument("--destination", required=True, type=Path, help="New daily Zarr path")
     parser.add_argument("--report-dir", required=True, type=Path)
-    parser.add_argument("--dataset-id", help="Default: era5.tongyun.YYYYMMDD.c78.p25.h6.v1")
+    parser.add_argument("--dataset-id", help="Default: era5.YYYYMMDD.c78.p25.h6.v1")
     # Use the existing c78 product; do not add another product/preprocessing definition.
     for option in ("mean-nc", "std-nc", "mask-nc", "const-nc", "weight-npy"):
         parser.add_argument(f"--{option}", type=Path, required=True)
@@ -73,7 +73,7 @@ def main(argv=None):
     if destination.exists() or destination.is_symlink():
         parser.error(f"destination must not exist: {destination}")
     files = required_files(source, args.date, io.get_description(SOURCE_CONFIG))
-    identity = args.dataset_id or f"era5.tongyun.{args.date:%Y%m%d}.c78.p25.h6.v1"
+    identity = args.dataset_id or f"era5.{args.date:%Y%m%d}.c78.p25.h6.v1"
 
     with TemporaryDirectory(prefix="tongyun-era5-daily-") as directory:
         stage = Path(directory)

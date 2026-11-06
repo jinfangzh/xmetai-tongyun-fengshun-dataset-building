@@ -109,27 +109,41 @@ def test_daily_partitions_build_normalized_c78_in_dry_run(daily_input, tmp_path)
 
 def _ready_config(daily_input, tmp_path):
     import json
-    root, day, description = daily_input
-    paths = [original for original, _ in daily.required_files(root, day, description)]
-    status = tmp_path / "status.jsonl"
-    status.write_text("".join(json.dumps({"status": "completed", "target": str(p)}) + "\n"
-                              for p in paths), encoding="utf-8")
-    return {"source": root, "download_status": status, "output_root": tmp_path / "products",
+    root, day, _ = daily_input
+    watermark = tmp_path / "watermark.json"
+    watermark.write_text(json.dumps({"latest_complete_day": day.isoformat()}), encoding="utf-8")
+    return {"source": root, "download_watermark": watermark, "output_root": tmp_path / "products",
             "report_dir": tmp_path / "reports",
             **{n: tmp_path / n for n in ("mean_nc", "std_nc", "mask_nc", "const_nc", "weight_npy")}}
 
 
-def test_ready_consumer_waits_for_all_completed_records(daily_input, tmp_path):
+def test_ready_consumer_respects_watermark_and_boundary_files(daily_input, tmp_path):
     from examples.dataset_building import build_ready_tongyun_days as consumer
     config = _ready_config(daily_input, tmp_path)
-    completed = consumer.completed_paths(config["download_status"])
-    assert list(consumer.ready_days(config, completed)) == [daily_input[1]]
-    completed.remove(next(iter(completed)))
-    assert list(consumer.ready_days(config, completed)) == []
-    # An incomplete concurrently written tail does not hide previous success records.
-    with config["download_status"].open("a") as stream:
-        stream.write('{"status":')
-    assert len(consumer.completed_paths(config["download_status"])) == 23
+    latest = consumer.read_watermark(config["download_watermark"])
+    assert list(consumer.ready_days(config, latest)) == [daily_input[1]]
+    assert list(consumer.ready_days(config, latest - timedelta(days=1))) == []
+    boundary = config["source"] / "sfc_accum_h1/total_precipitation/2024/total_precipitation_20241231.nc"
+    boundary.unlink()
+    assert list(consumer.ready_days(config, latest)) == []
+
+
+def test_ready_consumer_waits_without_watermark(daily_input, tmp_path, monkeypatch):
+    from examples.dataset_building import build_ready_tongyun_days as consumer
+    config = _ready_config(daily_input, tmp_path)
+    config["download_watermark"].unlink()
+    monkeypatch.setattr(daily, "main", lambda _: pytest.fail("must not build without watermark"))
+    assert consumer.run(config, write=True) == 0
+    assert not config["output_root"].exists()
+
+
+@pytest.mark.parametrize("payload", ['{}', '{"latest_complete_day": "2025-13-01"}', 'null', '{'])
+def test_invalid_watermark_is_rejected(tmp_path, payload):
+    from examples.dataset_building import build_ready_tongyun_days as consumer
+    path = tmp_path / "watermark.json"
+    path.write_text(payload, encoding="utf-8")
+    with pytest.raises(ValueError, match="Invalid download watermark"):
+        consumer.read_watermark(path)
 
 
 def test_ready_consumer_publishes_once_after_success(daily_input, tmp_path, monkeypatch):
@@ -146,9 +160,29 @@ def test_ready_consumer_publishes_once_after_success(daily_input, tmp_path, monk
     monkeypatch.setattr(daily, "main", fake_build)
     assert consumer.run(config, write=True) == 0
     assert len(list((config["output_root"] / "_completed").glob("*.json"))) == 1
-    assert (config["output_root"] / "era5.tongyun.20250101.c78.p25.h6.v1").is_dir()
+    assert (config["output_root"] / "era5.20250101.c78.p25.h6.v1").is_dir()
+    monkeypatch.setattr(daily, "required_files", lambda *_: pytest.fail(
+        "Completed products must skip source-file checks"))
     assert consumer.run(config, write=True) == 0
     assert len(calls) == 1
+
+
+def test_completion_marker_without_product_still_checks_sources(daily_input, tmp_path, monkeypatch):
+    from examples.dataset_building import build_ready_tongyun_days as consumer
+    config = _ready_config(daily_input, tmp_path)
+    _, _, marker = consumer.product_paths(config, daily_input[1])
+    marker.parent.mkdir(parents=True)
+    marker.write_text("{}", encoding="utf-8")
+    checked = []
+    original = daily.required_files
+
+    def check_sources(*args):
+        checked.append(args[1])
+        return original(*args)
+
+    monkeypatch.setattr(daily, "required_files", check_sources)
+    assert list(consumer.ready_days(config, daily_input[1])) == [daily_input[1]]
+    assert checked == [daily_input[1]]
 
 
 def test_ready_consumer_retries_failed_attempt_without_overwrite(daily_input, tmp_path, monkeypatch):

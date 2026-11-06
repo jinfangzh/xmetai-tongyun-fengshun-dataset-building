@@ -329,7 +329,7 @@ def _validate_dataset(
     auxiliary_directory: str | Path | None = None,
     sample_blocks: int = 3,
     max_blocks: int | None = None,
-    memory_budget_mib: int = 4096,
+    memory_budget_mib: int = 8192,
     stop_requested: Callable[[], bool] | None = None,
     on_block: Callable[[dict[str, Any]], None] | None = None,
 ) -> ValidationReport:
@@ -807,7 +807,7 @@ def _validate_dataset(
 
 def validate_zarr(
     target, spec, output=None, *, mode="full", auxiliary_directory=None,
-    sample_blocks=3, max_blocks=None, memory_budget_mib=4096,
+    sample_blocks=3, max_blocks=None, memory_budget_mib=8192,
     stop_requested=None, on_block=None,
 ):
     """Check one target against its contract and declared numerical rules.

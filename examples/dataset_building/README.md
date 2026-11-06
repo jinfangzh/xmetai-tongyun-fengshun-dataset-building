@@ -33,7 +33,7 @@ sfc_accum_h1/<variable>/<year>/<variable>_YYYYMMDD.nc
 python -m examples.dataset_building.example_build_tongyun_daily \
   --date 2026-10-30 \
   --source /home/xmetai/era5_download/era5_tongyun_c78/raw/daily \
-  --destination /home/xmetai/era5_download/era5_tongyun_c78/zarr/era5.tongyun.20261030.c78.p25.h6.v1 \
+  --destination /home/xmetai/era5_download/era5_tongyun_c78/zarr/era5.20261030.c78.p25.h6.v1 \
   --mean-nc /path/to/mean.nc \
   --std-nc /path/to/std.nc \
   --mask-nc /path/to/mask.nc \
@@ -58,13 +58,19 @@ mask、const、weight 使用标准契约匹配的外部附件。NaN等质量问�
 
 ### 下载完成后自动构建
 
-`build_ready_tongyun_days.py` 消费原下载器的 `status.jsonl`，与下载进程独立运行。
-每次从温度文件的 completed 记录发现候选日，核对当天18个文件及前一天5个累计量文件：
-所有文件同时存在且都有 completed 记录才开始构建。仍在下载的 `.part` 不触发构建。
+`build_ready_tongyun_days.py` 读取原下载器的 `watermark.json`，与下载进程独立运行。
+`latest_complete_day` 是允许构建的最晚日期；水位不存在时输出 WAIT，不开始构建。
+从本地温度日文件发现候选日期，只处理水位及之前的日期，并核对当天18个文件及前一天
+5个累计量文件全部存在。仍在下载的 `.part` 不参与候选日发现或文件齐全检查。
+不再读取 `status.jsonl`；正式的时间、变量和质量验收仍由构建器执行。
+水位推进多天时，按日期顺序补建尚未生成的日产品，不会只保留最新一天。
+每次仍扫描温度文件名以发现候选日期，但先检查完成标记和最终Zarr目录；
+两者都存在就直接跳过，不再检查该日期的23份源文件。只有尚未完成的日期才检查源文件。
 无需修改下载器，也不等待下载器把全部追赶日期下载完。
 
 先修改 `examples/dataset_building/tongyun_daily_server.yaml` 中五个附件路径，
-source/download_status 必须对应现有下载器的数据目录与成功状态日志。
+source/download_watermark 必须对应现有下载器的数据目录与水位文件。
+旧配置需将 download_status 替换为 download_watermark，并把路径改为 watermark.json。
 运行 dry-run（会读数据、加工和保存诊断，但不创建Zarr或完成标记）：
 
 ```bash
@@ -106,7 +112,7 @@ tail -f /home/xmetai/logs/xmetai-era5-tongyun/zarr-build.log
 ls /home/xmetai/era5_download/era5_tongyun_c78/zarr/_completed/
 ```
 
-日志中的 `WAIT` 表示文件或成功记录尚未齐全，`BUILD` 表示开始加工，
+日志中的 `WAIT` 表示水位尚不存在或源文件未齐全，`BUILD` 表示开始加工，
 `READY` 表示日Zarr已发布，`SKIP` 表示该日期已成功生成，`FAILED` 查看JSON报告。
 此衔接仅自动构建Zarr，尚不自动调用模型推理。
 
