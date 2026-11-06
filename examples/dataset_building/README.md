@@ -8,6 +8,9 @@
 
 ## 运行构建用例
 
+Tongyun服务器的完整流程、当前crontab、日期水位、失败恢复及排查命令见
+[每日下载与Zarr自动构建运行手册](TONGYUN_DAILY_OPERATIONS.md)。
+
 ### Tongyun 每日下载 → 日 Zarr
 
 `example_build_tongyun_daily.py` 是 `example_build_era5.py` 的按日入口，沿用现有标准加工：
@@ -82,8 +85,8 @@ python -m examples.dataset_building.build_ready_tongyun_days \
 默认每次最多处理一个就绪日期；使用 `--max-days 3` 可单次追赶三个日期。
 mean/std 固定使用已有统计量，转换处理仍来自 `example_build_era5.py`。
 
-现有下载cron保持每天10:30，另加一条每分钟检查构建的cron。以下假设新代码已同步到
-服务器的 `/home/xmetai/xmetai-datakit-download`（目录名不影响功能）：
+现有下载cron保持每天10:30，另加一条每30分钟检查构建的cron。构建代码所在服务器仓库是
+`/home/xmetai/xmetai-datakit`，下载器仍在 `/home/xmetai/xmetai-datakit-download`：
 
 ```bash
 mkdir -p /home/xmetai/logs/xmetai-era5-tongyun
@@ -93,11 +96,11 @@ crontab -e
 新增完整一行：
 
 ```cron
-* * * * * cd /home/xmetai/xmetai-datakit-download && /usr/bin/flock -n /tmp/xmetai-era5-tongyun-zarr.lock /home/xmetai/anaconda3/envs/zjf/bin/python -u -m examples.dataset_building.build_ready_tongyun_days --config examples/dataset_building/tongyun_daily_server.yaml --write >> /home/xmetai/logs/xmetai-era5-tongyun/zarr-build.log 2>&1
+*/30 * * * * cd /home/xmetai/xmetai-datakit && /usr/bin/flock -n /tmp/xmetai-era5-tongyun-zarr.lock /home/xmetai/anaconda3/envs/zjf/bin/python -u -m examples.dataset_building.build_ready_tongyun_days --config examples/dataset_building/tongyun_daily_server.yaml --write >> /home/xmetai/logs/xmetai-era5-tongyun/zarr-build.log 2>&1
 ```
 
 构建锁与下载锁不同，可以一边下载下一天一边构建上一天；同一时刻只有一个构建任务。
-新一天满足就绪条件后通常在下一分钟检查时启动，若上一次构建未结束则等待后续触发。
+新一天满足就绪条件后在下一次半小时检查时尝试启动，若上一次构建未结束则等待后续触发。
 
 构建先写到 `output_root/_attempts/<随机ID>/<产品名>`，只有构建器返回写入和Quick校验成功，
 才将产物移到 `output_root/<产品名>`，再原子写 `_completed/YYYYMMDD.json`。
