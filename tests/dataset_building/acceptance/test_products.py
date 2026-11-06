@@ -102,20 +102,22 @@ assert 'pipelines.dataset.old.channel_metadata' not in sys.modules
     assert result.returncode == 0, result.stderr
 
 
-def test_oras5_standards_match_only_observed_server_datasets(schemas):
+def test_oras5_standards_use_corrected_names_and_physical_depth(schemas):
     for name, shape in (("oras5_c88_1p5_h24", (121, 240)), ("oras5_c88_p25_h24", (721, 1440))):
         spec = schemas[name][0]
-        assert spec.product.version == "1.0" and spec.variant.cadence_hours == 24
+        assert spec.product.version == "2.0" and spec.variant.cadence_hours == 24
         assert spec.variant.grid.shape == shape
         definitions = {channel.name: channel for channel in spec.product.channels}
-        for variable in ("os", "ot", "ou", "ov"):
-            channel = definitions[f"{variable}19978"]
-            assert channel.variable == channel.source_name == variable
-            assert channel.level == 199.78 and channel.level_units == "m"
+        for variable, source in (("so", "so_oras"), ("to", "thetao_oras"),
+                                 ("uo", "uo_oras"), ("vo", "vo_oras")):
+            channel = definitions[f"{variable}19979"]
+            assert channel.variable == variable and channel.source_name == source
+            assert channel.level == 199.79 and channel.level_units == "m"
             assert channel.level_type == "depth_below_sea_surface"
-        assert definitions["os19978"].units is None
-        assert definitions["os19978"].unconfirmed_fields == ("units", "source_units")
-        assert "so19979" not in definitions
+        assert definitions["so19979"].units == "1e-3"
+        assert definitions["so19979"].unconfirmed_fields == ()
+        assert not any(name.startswith(("os", "ot", "ou", "ov")) or "19978" in name
+                       for name in definitions)
 
 
 def test_production_metadata_is_not_the_acceptance_source():

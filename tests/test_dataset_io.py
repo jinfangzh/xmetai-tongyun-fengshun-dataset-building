@@ -36,8 +36,9 @@ def test_all_source_declarations_load_from_an_external_yaml_directory(tmp_path):
     import shutil
 
     directory = source_config("forecast_fuxi").parent
-    assert len(list(directory.iterdir())) == 9
-    for original in directory.iterdir():
+    declarations = sorted(directory.iterdir())
+    assert declarations, "Source declaration directory must not be empty"
+    for original in declarations:
         assert original.suffix == ".yaml"
         copied = tmp_path / original.name
         shutil.copyfile(original, copied)

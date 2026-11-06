@@ -1,0 +1,25 @@
+name: oras5_cmems_daily_raw
+format: netcdf
+layout:
+  directory: '{time:%Y}'
+  filename: '{time:%Y%m%d}_oras5.nc'
+structure:
+  record_dimensions: [time]
+mapping:
+  coordinate_aliases: {latitude: lat, longitude: lon}
+  variables:
+    mlt: {source: mlotst_oras, source_unit: m}
+    sic: {source: siconc_oras, source_unit: '1'}
+    sit: {source: sithick_oras, source_unit: m}
+    so: {source: so_oras, source_unit: 1e-3}
+    to: {source: thetao_oras, source_unit: degrees_C}
+    uo: {source: uo_oras, source_unit: 'm s-1'}
+    vo: {source: vo_oras, source_unit: 'm s-1'}
+    ssh: {source: zos_oras, source_unit: m}
+example: 2025/20250101_oras5.nc
+notes: |-
+  Copernicus Marine downloader 生成的 ORAS5 全球日平均原始 NetCDF。
+  精确文件模板不会匹配下载中的 *.part.nc.* 临时文件。
+  文件保持原始变量、40个深度层、-180..179.75经度和-80..90纬度；
+  c88深度选择、经度转换、目标网格对齐和通道打包由 example_build_oras5 的
+  ORAS5 processor 执行。本契约描述下载产物，不代表已经标准化的数据。

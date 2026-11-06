@@ -1,0 +1,10 @@
+# Paths on the SSH server.
+source: /home/xmetai/era5_download/era5_tongyun_c78/raw/daily
+download_status: /home/xmetai/era5_download/era5_tongyun_c78/raw/_records/tongyun_c78_daily/status.jsonl
+output_root: /home/xmetai/era5_download/era5_tongyun_c78/zarr
+report_dir: /home/xmetai/era5_download/era5_tongyun_c78/reports
+mean_nc: /home/xmetai/stats/tongyun_c78/mean.nc
+std_nc: /home/xmetai/stats/tongyun_c78/std.nc
+mask_nc: /home/xmetai/stats/tongyun_c78/mask.nc
+const_nc: /home/xmetai/stats/tongyun_c78/const.nc
+weight_npy: /home/xmetai/stats/tongyun_c78/weight.npy

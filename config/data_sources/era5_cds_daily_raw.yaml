@@ -1,0 +1,53 @@
+name: era5_cds_daily_raw
+format: netcdf
+layout:
+  files:
+    z: 'pl_h6/geopotential/{day:%Y}/geopotential_{day:%Y%m%d}.nc'
+    t: 'pl_h6/temperature/{day:%Y}/temperature_{day:%Y%m%d}.nc'
+    u: 'pl_h6/u_component_of_wind/{day:%Y}/u_component_of_wind_{day:%Y%m%d}.nc'
+    v: 'pl_h6/v_component_of_wind/{day:%Y}/v_component_of_wind_{day:%Y%m%d}.nc'
+    q: 'pl_h6/specific_humidity/{day:%Y}/specific_humidity_{day:%Y%m%d}.nc'
+    t2m: 'sfc_inst_h6/2m_temperature/{day:%Y}/2m_temperature_{day:%Y%m%d}.nc'
+    d2m: 'sfc_inst_h6/2m_dewpoint_temperature/{day:%Y}/2m_dewpoint_temperature_{day:%Y%m%d}.nc'
+    sst: 'sfc_inst_h6/sea_surface_temperature/{day:%Y}/sea_surface_temperature_{day:%Y%m%d}.nc'
+    u10m: 'sfc_inst_h6/10m_u_component_of_wind/{day:%Y}/10m_u_component_of_wind_{day:%Y%m%d}.nc'
+    v10m: 'sfc_inst_h6/10m_v_component_of_wind/{day:%Y}/10m_v_component_of_wind_{day:%Y%m%d}.nc'
+    u100m: 'sfc_inst_h6/100m_u_component_of_wind/{day:%Y}/100m_u_component_of_wind_{day:%Y%m%d}.nc'
+    v100m: 'sfc_inst_h6/100m_v_component_of_wind/{day:%Y}/100m_v_component_of_wind_{day:%Y%m%d}.nc'
+    msl: 'sfc_inst_h6/mean_sea_level_pressure/{day:%Y}/mean_sea_level_pressure_{day:%Y%m%d}.nc'
+    ssr: 'sfc_accum_h1/surface_net_solar_radiation/{day:%Y}/surface_net_solar_radiation_{day:%Y%m%d}.nc'
+    ssrd: 'sfc_accum_h1/surface_solar_radiation_downwards/{day:%Y}/surface_solar_radiation_downwards_{day:%Y%m%d}.nc'
+    fdir: 'sfc_accum_h1/total_sky_direct_solar_radiation_at_surface/{day:%Y}/total_sky_direct_solar_radiation_at_surface_{day:%Y%m%d}.nc'
+    ttr: 'sfc_accum_h1/top_net_thermal_radiation/{day:%Y}/top_net_thermal_radiation_{day:%Y%m%d}.nc'
+    tp: 'sfc_accum_h1/total_precipitation/{day:%Y}/total_precipitation_{day:%Y%m%d}.nc'
+mapping:
+  coordinate_aliases:
+    valid_time: time
+    latitude: lat
+    longitude: lon
+    pressure_level: level
+  variables:
+    z: {source: z, source_unit: 'm**2 s**-2', unit: 'm2 s-2'}
+    t: {source: t, source_unit: 'K', unit: 'K'}
+    u: {source: u, source_unit: 'm s**-1', unit: 'm s-1'}
+    v: {source: v, source_unit: 'm s**-1', unit: 'm s-1'}
+    q: {source: q, source_unit: 'kg kg**-1', unit: 'kg kg-1'}
+    t2m: {source: t2m, source_unit: 'K', unit: 'K'}
+    d2m: {source: d2m, source_unit: 'K', unit: 'K'}
+    sst: {source: sst, source_unit: 'K', unit: 'K'}
+    u10m: {source: u10, source_unit: 'm s**-1', unit: 'm s-1'}
+    v10m: {source: v10, source_unit: 'm s**-1', unit: 'm s-1'}
+    u100m: {source: u100, source_unit: 'm s**-1', unit: 'm s-1'}
+    v100m: {source: v100, source_unit: 'm s**-1', unit: 'm s-1'}
+    msl: {source: msl, source_unit: 'Pa', unit: 'Pa'}
+    ssr: {source: ssr, source_unit: 'J m**-2', unit: 'J m-2', temporal_kind: interval_accumulation}
+    ssrd: {source: ssrd, source_unit: 'J m**-2', unit: 'J m-2', temporal_kind: interval_accumulation}
+    fdir: {source: fdir, source_unit: 'J m**-2', unit: 'J m-2', temporal_kind: interval_accumulation}
+    ttr: {source: ttr, source_unit: 'J m**-2', unit: 'J m-2', temporal_kind: interval_accumulation}
+    tp: {source: tp, source_unit: 'm', unit: 'm', temporal_kind: interval_accumulation}
+example: pl_h6/geopotential/2026/geopotential_20261029.nc
+notes: |-
+  source root is the downloader raw/daily directory; exact templates exclude .part.
+  Daily build stages only the requested day plus the previous day's accumulation files.
+  Hourly accumulations are summed over T-5h..T before packing; no conversion in mapping.
+

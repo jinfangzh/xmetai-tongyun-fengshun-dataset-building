@@ -1,0 +1,56 @@
+name: era5_cds_monthly_raw
+format: netcdf
+layout:
+  files:
+    z: 'pl_h6_v1/geopotential/{month:%Y}/geopotential_{month:%Y%m}.nc'
+    t: 'pl_h6_v1/temperature/{month:%Y}/temperature_{month:%Y%m}.nc'
+    u: 'pl_h6_v1/u_component_of_wind/{month:%Y}/u_component_of_wind_{month:%Y%m}.nc'
+    v: 'pl_h6_v1/v_component_of_wind/{month:%Y}/v_component_of_wind_{month:%Y%m}.nc'
+    q: 'pl_h6_v1/specific_humidity/{month:%Y}/specific_humidity_{month:%Y%m}.nc'
+    t2m: 'sfc_h6_v1/2m_temperature/{month:%Y}/2m_temperature_{month:%Y%m}.zip'
+    d2m: 'sfc_h6_v1/2m_dewpoint_temperature/{month:%Y}/2m_dewpoint_temperature_{month:%Y%m}.zip'
+    sst: 'sfc_h6_v1/sea_surface_temperature/{month:%Y}/sea_surface_temperature_{month:%Y%m}.zip'
+    u10m: 'sfc_h6_v1/10m_u_component_of_wind/{month:%Y}/10m_u_component_of_wind_{month:%Y%m}.zip'
+    v10m: 'sfc_h6_v1/10m_v_component_of_wind/{month:%Y}/10m_v_component_of_wind_{month:%Y%m}.zip'
+    u100m: 'sfc_h6_v1/100m_u_component_of_wind/{month:%Y}/100m_u_component_of_wind_{month:%Y%m}.zip'
+    v100m: 'sfc_h6_v1/100m_v_component_of_wind/{month:%Y}/100m_v_component_of_wind_{month:%Y%m}.zip'
+    msl: 'sfc_h6_v1/mean_sea_level_pressure/{month:%Y}/mean_sea_level_pressure_{month:%Y%m}.zip'
+    ssr: 'accum_h1_v1/surface_net_solar_radiation/{month:%Y}/surface_net_solar_radiation_{month:%Y%m}.zip'
+    ssrd: 'accum_h1_v1/surface_solar_radiation_downwards/{month:%Y}/surface_solar_radiation_downwards_{month:%Y%m}.zip'
+    fdir: 'accum_h1_v1/total_sky_direct_solar_radiation_at_surface/{month:%Y}/total_sky_direct_solar_radiation_at_surface_{month:%Y%m}.zip'
+    ttr: 'accum_h1_v1/top_net_thermal_radiation/{month:%Y}/top_net_thermal_radiation_{month:%Y%m}.zip'
+    tp: 'accum_h1_v1/total_precipitation/{month:%Y}/total_precipitation_{month:%Y%m}.zip'
+mapping:
+  coordinate_aliases:
+    valid_time: time
+    latitude: lat
+    longitude: lon
+    pressure_level: level
+  variables:
+    z: {source: z, source_unit: 'm**2 s**-2', unit: 'm2 s-2'}
+    t: {source: t, source_unit: 'K', unit: 'K'}
+    u: {source: u, source_unit: 'm s**-1', unit: 'm s-1'}
+    v: {source: v, source_unit: 'm s**-1', unit: 'm s-1'}
+    q: {source: q, source_unit: 'kg kg**-1', unit: 'kg kg-1'}
+    t2m: {source: t2m, source_unit: 'K', unit: 'K'}
+    d2m: {source: d2m, source_unit: 'K', unit: 'K'}
+    sst: {source: sst, source_unit: 'K', unit: 'K'}
+    u10m: {source: u10, source_unit: 'm s**-1', unit: 'm s-1'}
+    v10m: {source: v10, source_unit: 'm s**-1', unit: 'm s-1'}
+    u100m: {source: u100, source_unit: 'm s**-1', unit: 'm s-1'}
+    v100m: {source: v100, source_unit: 'm s**-1', unit: 'm s-1'}
+    msl: {source: msl, source_unit: 'Pa', unit: 'Pa'}
+    ssr: {source: ssr, source_unit: 'J m**-2', unit: 'J m-2', temporal_kind: interval_accumulation}
+    ssrd: {source: ssrd, source_unit: 'J m**-2', unit: 'J m-2', temporal_kind: interval_accumulation}
+    fdir: {source: fdir, source_unit: 'J m**-2', unit: 'J m-2', temporal_kind: interval_accumulation}
+    ttr: {source: ttr, source_unit: 'J m**-2', unit: 'J m-2', temporal_kind: interval_accumulation}
+    tp: {source: tp, source_unit: 'm', unit: 'm', temporal_kind: interval_accumulation}
+example: pl_h6_v1/geopotential/2025/geopotential_202501.nc
+notes: |-
+  匹配三组 downloader 输出：pl_h6_v1/*.nc、sfc_h6_v1/*.zip、accum_h1_v1/*.zip。
+  实际文件按变量/年份分目录，精确模板排除 .part 文件。
+  CDS NetCDF 的 valid_time 是有效时刻；瞬时变量选择目标时次。
+  小时累积量为此前一小时的量，6小时窗口采用右端标记：T-5h..T。
+  月初00时窗口需要上月末19..23时，缺少窗口时间戳时报错。
+  unit 仅声明与目标源单位等价的拼写；打包不执行数值单位换算。
+  ZIP 由共享 NetCDF reader 临时解压，需每个ZIP恰好包含一个NC。

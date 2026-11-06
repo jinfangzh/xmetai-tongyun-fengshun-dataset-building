@@ -5,7 +5,7 @@ meta_info:
   name: ORAS5 c88 / 1.5° / 24小时
   dataset_id: oras5.c88.1p5.h24  # 产品与变体的配置标识。
   expected_root_dataset_id: oras5.1993_2024.c88.1p5.h24.v1
-  product: {id: oras5.c88, version: '1.0', variant: 1p5.h24}
+  product: {id: oras5.c88, version: '2.0', variant: 1p5.h24}
   schema_version: '2.0'
   status: approved
   template_version: v1  # 本套模板规则的版本。
@@ -30,18 +30,18 @@ meta_info:
     longitude: {first: 0.0, last: 358.5, count: 240, direction: west-to-east}
 
   depth_below_sea_surface:
-    variables: [os, ot, ou, ov]
+    variables: [so, to, uo, vo]
     units: m
     channel_name_template: '{variable}{level_code}'
-    level_codes: {'50': 0.5, '266': 2.66, '514': 5.14, '809': 8.09, '1177': 11.77, '1652': 16.52, '2275': 22.75, '3087': 30.87, '4118': 41.18, '5385': 53.85, '6902': 69.02, '8692': 86.92, '10803': 108.03, '13307': 133.07, '16316': 163.16, '19978': 199.78, '22114': 221.14, '27135': 271.35, '33386': 333.86, '41179': 411.79, '50863': 508.63}  # 深度标签到物理深度的映射，深度单位见units。
+    level_codes: {'50': 0.5, '266': 2.66, '514': 5.14, '809': 8.09, '1177': 11.77, '1652': 16.52, '2275': 22.75, '3087': 30.87, '4118': 41.18, '5385': 53.85, '6902': 69.02, '8692': 86.92, '10803': 108.03, '13307': 133.07, '16316': 163.16, '19979': 199.7900, '22114': 221.14, '27135': 271.35, '33386': 333.86, '41179': 411.79, '50863': 508.63}  # 深度标签到物理深度的映射，深度单位见units。
 
-  channels: [os50, os266, os514, os809, os1177, os1652, os2275, os3087, os4118, os5385, os6902, os8692,  # 完整88通道的唯一顺序。
-    os10803, os13307, os16316, os19978, os22114, os27135, os33386, os41179, os50863, ot50, ot266, ot514,
-    ot809, ot1177, ot1652, ot2275, ot3087, ot4118, ot5385, ot6902, ot8692, ot10803, ot13307, ot16316, ot19978,
-    ot22114, ot27135, ot33386, ot41179, ot50863, ou50, ou266, ou514, ou809, ou1177, ou1652, ou2275, ou3087,
-    ou4118, ou5385, ou6902, ou8692, ou10803, ou13307, ou16316, ou19978, ou22114, ou27135, ou33386, ou41179,
-    ou50863, ov50, ov266, ov514, ov809, ov1177, ov1652, ov2275, ov3087, ov4118, ov5385, ov6902, ov8692,
-    ov10803, ov13307, ov16316, ov19978, ov22114, ov27135, ov33386, ov41179, ov50863, sit, ssh, sic, mlt]
+  channels: [so50, so266, so514, so809, so1177, so1652, so2275, so3087, so4118, so5385, so6902, so8692,  # 完整88通道的唯一顺序。
+    so10803, so13307, so16316, so19979, so22114, so27135, so33386, so41179, so50863, to50, to266, to514,
+    to809, to1177, to1652, to2275, to3087, to4118, to5385, to6902, to8692, to10803, to13307, to16316, to19979,
+    to22114, to27135, to33386, to41179, to50863, uo50, uo266, uo514, uo809, uo1177, uo1652, uo2275, uo3087,
+    uo4118, uo5385, uo6902, uo8692, uo10803, uo13307, uo16316, uo19979, uo22114, uo27135, uo33386, uo41179,
+    uo50863, vo50, vo266, vo514, vo809, vo1177, vo1652, vo2275, vo3087, vo4118, vo5385, vo6902, vo8692,
+    vo10803, vo13307, vo16316, vo19979, vo22114, vo27135, vo33386, vo41179, vo50863, sit, ssh, sic, mlt]
 
   arrays:
     data: {dimensions: [time, channel, lat, lon], dtype: float16, chunks: {time: 1, channel: full, lat: full, lon: full}}  # full表示对应维度的完整长度。
@@ -110,11 +110,11 @@ meta_info:
 # 第二部分：变量语义、来源及预处理流程。
 # units表示预处理结果单位；preprocessing按声明顺序执行。
 variable_metadata:
-  os: {units: null, long_name: "Sea water salinity", source_name: "os", source_units: null, variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}], unconfirmed_fields: ["units", "source_units"]}  # 盐度单位及来源单位未确认。
-  ot: {units: "degree_Celsius", long_name: "Sea water potential temperature", source_name: "ot", source_units: "degree_Celsius", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
-  ou: {units: "m s-1", long_name: "Eastward sea water velocity", source_name: "ou", source_units: "m s-1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
-  ov: {units: "m s-1", long_name: "Northward sea water velocity", source_name: "ov", source_units: "m s-1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
-  sit: {units: "m", long_name: "Sea ice thickness", level_type: "surface", source_name: "sit", source_units: "m", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
-  ssh: {units: "m", long_name: "Sea surface height", level_type: "surface", source_name: "ssh", source_units: "m", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
-  sic: {units: "1", long_name: "Sea ice concentration", level_type: "surface", source_name: "sic", source_units: "1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
-  mlt: {units: "m", long_name: "Mixed layer thickness", level_type: "surface", source_name: "mlt", source_units: "m", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  so: {units: "1e-3", long_name: "Sea water salinity", source_name: "so_oras", source_units: "1e-3", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  to: {units: "degree_Celsius", long_name: "Sea water potential temperature", source_name: "thetao_oras", source_units: "degrees_C", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  uo: {units: "m s-1", long_name: "Eastward sea water velocity", source_name: "uo_oras", source_units: "m s-1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  vo: {units: "m s-1", long_name: "Northward sea water velocity", source_name: "vo_oras", source_units: "m s-1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  sit: {units: "m", long_name: "Sea ice thickness", level_type: "surface", source_name: "sithick_oras", source_units: "m", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  ssh: {units: "m", long_name: "Sea surface height", level_type: "surface", source_name: "zos_oras", source_units: "m", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  sic: {units: "1", long_name: "Sea ice concentration", level_type: "surface", source_name: "siconc_oras", source_units: "1", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}
+  mlt: {units: "m", long_name: "Mixed layer thickness", level_type: "surface", source_name: "mlotst_oras", source_units: "m", variable_type: "instantaneous", preprocessing: [{"operation": "zscore", "mean": "/mean", "std": "/std"}]}

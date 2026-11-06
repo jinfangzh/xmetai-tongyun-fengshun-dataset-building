@@ -176,14 +176,14 @@ def test_blocked_main_scan_does_not_report_main_quality_pass(published):
 def test_previous_process_peak_does_not_block_new_scan(published, monkeypatch, mode):
     """Earlier evaluation work must not consume a later scan's memory budget."""
     path, spec = published
-    monkeypatch.setattr(memory, "peak_memory_bytes", lambda: 4 * 1024**3)
+    monkeypatch.setattr(memory, "peak_memory_bytes", lambda: 8 * 1024**3)
     monkeypatch.setattr(memory, "resident_memory_bytes", lambda: 128 * 1024**2)
 
     report = validate_fixture(path, spec, mode=mode)
 
     assert report.release_passed if mode == "full" else report.quick_passed, report.to_dict()
     assert report.coverage["value_checked"] == (12 if mode == "full" else 3)
-    assert report.coverage["peak_process_memory_bytes"] == 4 * 1024**3
+    assert report.coverage["peak_process_memory_bytes"] == 8 * 1024**3
     assert report.coverage["process_resident_before_bytes"] == 128 * 1024**2
     assert report.coverage["sampled_peak_resident_bytes"] == 128 * 1024**2
     _assert_counts(report)
@@ -192,7 +192,7 @@ def test_previous_process_peak_does_not_block_new_scan(published, monkeypatch, m
 @pytest.mark.parametrize("mode", ["quick", "full"])
 def test_current_memory_above_budget_blocks_scan(published, monkeypatch, mode):
     path, spec = published
-    monkeypatch.setattr(memory, "resident_memory_bytes", lambda: 3 * 1024**3)
+    monkeypatch.setattr(memory, "resident_memory_bytes", lambda: 5 * 1024**3)
 
     report = validate_fixture(path, spec, mode=mode)
 
@@ -206,7 +206,7 @@ def test_current_memory_above_budget_blocks_scan(published, monkeypatch, mode):
 @pytest.mark.parametrize("mode", ["quick", "full"])
 def test_current_memory_growth_interrupts_scan(published, monkeypatch, mode):
     path, spec = published
-    samples = iter([128 * 1024**2, 128 * 1024**2, 3 * 1024**3])
+    samples = iter([128 * 1024**2, 128 * 1024**2, 5 * 1024**3])
     monkeypatch.setattr(memory, "resident_memory_bytes", lambda: next(samples))
 
     report = validate_fixture(path, spec, mode=mode)
@@ -216,7 +216,7 @@ def test_current_memory_growth_interrupts_scan(published, monkeypatch, mode):
     assert report.coverage["interrupted"]
     assert report.coverage["value_checked"] == 2
     assert report.coverage["not_scanned"] == 10
-    assert report.coverage["sampled_peak_resident_bytes"] == 3 * 1024**3
+    assert report.coverage["sampled_peak_resident_bytes"] == 5 * 1024**3
     _assert_counts(report)
 
 

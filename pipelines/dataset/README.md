@@ -38,18 +38,49 @@ datakit：IO、契约模型、基础变换与检查
 ## 构建
 
 ```text
-build_zarr(source_config, target_spec, source_path, destination, *, process, dry_run=False)
+build_zarr(source_config, target_spec, source_path, destination, *, process, read=None, dry_run=False, build_overrides=None, auxiliaries=None)
 ```
 
-流程为：契约加载和源检查 → 读取源 → `process(raw, source_contract, spec)` → 标准组装 → `create_zarr` → 关闭源 → `validate_zarr(mode="quick")`。
+流程为：契约加载和源检查 → 附件路径准备 → 读取源 → `process(raw, source_contract, spec)` → 标准组装 → `create_zarr` → 关闭源 → 复制附件 → `validate_zarr(mode="quick")`。
+
+`auxiliaries` 是契约文件名到源文件路径的映射，例如
+`{"const.nc": "/data/static/const.nc", "weight.nc": "/data/static/weight.nc"}`。
+正式写出前必须提供全部必需附件；此时只检查名称、文件存在、路径隔离并记录摘要，
+不预检查内容。写出后按文件名复制到目标根目录，验证源和副本摘要，不覆盖已有文件，
+再由 Quick 检查内容。复制失败保留已写目录并记录 `auxiliary_copy` 失败。
+dry-run 不复制，可不提供附件；遗漏的必需项记录在 `coverage.missing_auxiliary_inputs`，
+内存符合性通过不代表这些外部附件已验收。附件来源与摘要记录在 `coverage.auxiliary_inputs`。
+
+`build_overrides` 仅支持 `first_time/last_time/dataset_id/content_version/data_revision`，
+用于以同一标准构建不同时间段的产物。起止时间须成对提供，覆盖时间时须显式指定
+数据集标识；时间步长、通道、网格、类型、质量与附件规则不允许覆盖。
+生效的目录名取实际输出目录名，变更身份时不继承旧产物的身份映射证据。
+标准 YAML 保持不变，报告 `coverage.target_contract` 记录模板摘要、覆盖参数与
+实际生效范围。后续验收此产物也须使用相同运行参数解析后的契约，不能直接按原历史范围验收。
+
+可选 `read(source_path, description, *, spec)` 替换默认读取，返回可关闭的
+Dataset，其资源仍由 pipeline 保持到写出结束并关闭。例如 ERA5 小时量与
+六小时瞬时量需要保留独立的原始时间轴，由示例提供读取回调；求和和打包
+在 `process` 中执行，不在公共 pipeline 中选择专属算法。
 
 源检查覆盖文件发现、可读性、坐标标签唯一性、声明的 packed 结构及已出现映射变量的单位。它不证明未声明的日期覆盖、累计窗口或算法适用性；调用方须选择匹配输入语义和目标要求的加工实现。
 
 `process` 返回包含 `data/mean/std/mask` 的 `xr.Dataset`。数值、dtype、维度顺序、坐标、通道选择和附件由处理函数准备；`mean/std/mask` 等专属参数通过 `functools.partial` 绑定。
 
 `preparation.assemble_standard_dataset` 检查布局和精确对齐，填写根、data 和 channel 的标准属性，不排序、转型或修复数据。主数据可保持惰性；组装在新结果上填写元数据，额外坐标留给最终检查。UTC 等声明仍须由调用方保证真实语义。
+准备和组装后的 Dataset 按 `time, channel, lat, lon, mask_channel` 展示维度，
+各数组仍保留契约声明的维度顺序。Zarr 没有 Dataset 全局维度顺序，重新读取时
+顶部 `Dimensions` 的排列可能改变；主数组的存储维度仍为 `time, channel, lat, lon`。
 
-处理函数自行打开的附件须自行关闭，并保证返回数据在写出时可读取。pipeline 打开的源在检查和写出完成前保持打开，正常及异常退出均释放资源。创建检查和写出只调用一次 `create_zarr`，避免重复扫描。
+`process` 可显式复用同模块的 `load_external_array`（加载外部数组并关闭源）、
+`prepare_statistics`（加载或计算缺失统计量）、`prepare_standard_arrays`
+（精确对齐、mask 转型前检查、目标类型/坐标及 Dask 分块准备）。统计量以
+调用方提供的数据域计算；这些工具不执行单位转换或归一化，也不会自动运行。
+
+处理函数自行打开的附件须自行关闭，并保证返回数据在写出时可读取。pipeline 打开的源在检查和写出完成前保持打开，正常及异常退出均释放资源。
+加工结果和标准组装结果的关闭回调也在退出读取作用域时执行；正式写出后删除源与产物的
+局部引用并执行垃圾回收，再复制附件和进行回读校验。内存预算及校验进程方式不变。
+创建检查和写出只调用一次 `create_zarr`，避免重复扫描。
 
 `BuildReport` 提供阶段状态、失败信息、`coverage`、`quick_passed`、`creation_report`、`validation_report` 及 `to_dict()`：
 
@@ -96,6 +127,8 @@ report = validate_zarr(
 ```
 
 公开检查参数为 `mode`、`auxiliary_directory`、`sample_blocks`、`max_blocks`、`memory_budget_mib`、`stop_requested` 和 `on_block`。计数必须是正整数，内存预算须有限且至少为 1 MiB，回调须可调用；非法参数在读取契约和数据前拒绝。
+默认校验内存预算为 4096 MiB（4 GiB），构建完成后的 Quick 校验沿用此默认值；
+检查仍覆盖预计工作内存及进程当前驻留内存，不预先分配整份预算。
 
 默认 full，按 `release_passed` 判断通过；quick 按 `quick_passed` 判断。快速或中断的扫描不能授权完整发布。数值扫描、物理覆盖和证据完整性分别记录；`on_block`、`max_blocks`、`memory_budget_mib`、`stop_requested` 可控制扫描及中断。
 
@@ -121,7 +154,8 @@ report = validate_zarr(
 | 模块 | 职责 |
 | --- | --- |
 | `build.py` | 契约加载、源检查、加工调用、构建编排及源资源管理 |
-| `preparation.py` | 标准结构和元数据组装；可选的显式变量/阈值 mask 生成工具 |
+| `auxiliaries.py` | 外部附件路径准备、摘要记录及不覆盖的复制；内容交给落盘校验 |
+| `preparation.py` | 标准元数据组装；可显式调用的外部数组加载、统计量准备、数组整理、层选择及打包工具 |
 | `create.py` | 内存产物检查与写出 |
 | `append.py` | B + A 写入独立 C 并完整校验 |
 | `validate.py` | 落盘验收、扫描、资源预算及中断 |
