@@ -19,6 +19,9 @@
 当前 IO 面向本地文件系统；CDS、Copernicus Marine 下载方案
 独立放在 `examples/dataset_downloader/`，按各自说明安装服务客户端依赖。
 
+每日下载后的自动 Zarr 构建见 [Tongyun 运行手册](examples/dataset_building/TONGYUN_DAILY_OPERATIONS.md)
+和 [Fengshun 运行手册](examples/dataset_building/FENGSHUN_DAILY_OPERATIONS.md)。
+
 ## 代码结构
 
 围绕这些任务，仓库分为基础组件、可复用工作流和具体应用三个部分：

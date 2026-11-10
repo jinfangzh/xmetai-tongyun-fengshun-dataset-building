@@ -8,6 +8,11 @@
 
 ## 运行构建用例
 
+Fengshun 的 c76 / 1.5° 日统计 NC 衔接、配置及独立构建 cron 见
+[Fengshun 每日 Zarr 构建手册](FENGSHUN_DAILY_OPERATIONS.md)。
+入口为 `example_build_fengshun_daily.py`（单日）及 `build_ready_fengshun_days.py`（自动消费水位），
+复用已有 S2S c76 标准和 Tongyun 发布流程，日均/日累计不再做小时求和。
+
 Tongyun服务器的完整流程、当前crontab、日期水位、失败恢复及排查命令见
 [每日下载与Zarr自动构建运行手册](TONGYUN_DAILY_OPERATIONS.md)。
 

@@ -2,6 +2,7 @@
 
 Run periodically beside the existing downloader. Dry-run is the default;
 --write creates new independent products through example_build_tongyun_daily.
+Fengshun reuses discovery and publication with its own builder module.
 """
 
 import argparse
@@ -50,18 +51,17 @@ def load_config(path):
     return config
 
 
-def product_paths(config, day):
-    identity = f"era5.{day:%Y%m%d}.c78.p25.h6.v1"
+def product_paths(config, day, *, builder=daily):
+    identity = builder.IDENTITY_TEMPLATE.format(day=day)
     return (identity, config["output_root"] / identity,
             config["output_root"] / "_completed" / f"{day:%Y%m%d}.json")
 
 
-def ready_days(config, latest):
-    description = io.get_description(daily.SOURCE_CONFIG)
+def ready_days(config, latest, *, builder=daily):
+    description = io.get_description(builder.SOURCE_CONFIG)
     # Find local candidate dates, but never process beyond the download watermark.
-    anchor = config["source"] / "pl_h6" / "temperature"
     candidates = set()
-    for path in anchor.glob("*/temperature_*.nc"):
+    for path in config["source"].glob(builder.CANDIDATE_GLOB):
         try:
             candidate = datetime.strptime(path.stem, "temperature_%Y%m%d").date()
         except ValueError:
@@ -69,27 +69,27 @@ def ready_days(config, latest):
         if candidate <= latest:
             candidates.add(candidate)
     for day in sorted(candidates):
-        _, destination, marker = product_paths(config, day)
+        _, destination, marker = product_paths(config, day, builder=builder)
         if marker.is_file() and destination.is_dir():
             print(f"SKIP {day}: already built", flush=True)
             continue
         try:
-            daily.required_files(config["source"], day, description)
+            builder.required_files(config["source"], day, description)
         except FileNotFoundError:
-            print(f"WAIT {day}: missing daily/boundary files", flush=True)
+            print(f"WAIT {day}: missing required source files", flush=True)
             continue
         yield day
 
 
-def run(config, *, write=False, max_days=1):
+def run(config, *, write=False, max_days=1, builder=daily):
     latest = read_watermark(config["download_watermark"])
     if latest is None:
         print(f"WAIT: no completed download day; watermark missing: {config['download_watermark']}", flush=True)
         return 0
     print(f"Download watermark: {latest}", flush=True)
     failures, attempted = 0, 0
-    for day in ready_days(config, latest):
-        identity, destination, marker = product_paths(config, day)
+    for day in ready_days(config, latest, builder=builder):
+        identity, destination, marker = product_paths(config, day, builder=builder)
         # Recheck at execution time in case a product was published since discovery.
         if marker.is_file() and destination.is_dir():
             print(f"SKIP {day}: already built", flush=True)
@@ -112,7 +112,7 @@ def run(config, *, write=False, max_days=1):
         print(f"BUILD {day}: {'write' if write else 'dry-run'} -> {destination}", flush=True)
         attempted += 1
         try:
-            result = daily.main(options)
+            result = builder.main(options)
             if result != 0:
                 failures += 1
                 print(f"FAILED {day}: inspect reports; retry on next run", flush=True)

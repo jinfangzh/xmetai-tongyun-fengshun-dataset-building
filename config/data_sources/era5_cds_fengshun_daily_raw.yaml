@@ -1,0 +1,49 @@
+name: era5_cds_fengshun_daily_raw
+format: netcdf
+layout:
+  files:
+    z: 'pl_mean/geopotential/{day:%Y}/geopotential_{day:%Y%m%d}.nc'
+    t: 'pl_mean/temperature/{day:%Y}/temperature_{day:%Y%m%d}.nc'
+    u: 'pl_mean/u_component_of_wind/{day:%Y}/u_component_of_wind_{day:%Y%m%d}.nc'
+    v: 'pl_mean/v_component_of_wind/{day:%Y}/v_component_of_wind_{day:%Y%m%d}.nc'
+    q: 'pl_mean/specific_humidity/{day:%Y}/specific_humidity_{day:%Y%m%d}.nc'
+    t2m: 'sfc_mean/2m_temperature/{day:%Y}/2m_temperature_{day:%Y%m%d}.nc'
+    d2m: 'sfc_mean/2m_dewpoint_temperature/{day:%Y}/2m_dewpoint_temperature_{day:%Y%m%d}.nc'
+    sst: 'sfc_mean/sea_surface_temperature/{day:%Y}/sea_surface_temperature_{day:%Y%m%d}.nc'
+    ttr: 'sfc_sum/top_net_thermal_radiation/{day:%Y}/top_net_thermal_radiation_{day:%Y%m%d}.nc'
+    u10m: 'sfc_mean/10m_u_component_of_wind/{day:%Y}/10m_u_component_of_wind_{day:%Y%m%d}.nc'
+    v10m: 'sfc_mean/10m_v_component_of_wind/{day:%Y}/10m_v_component_of_wind_{day:%Y%m%d}.nc'
+    u100m: 'sfc_mean/100m_u_component_of_wind/{day:%Y}/100m_u_component_of_wind_{day:%Y%m%d}.nc'
+    v100m: 'sfc_mean/100m_v_component_of_wind/{day:%Y}/100m_v_component_of_wind_{day:%Y%m%d}.nc'
+    msl: 'sfc_mean/mean_sea_level_pressure/{day:%Y}/mean_sea_level_pressure_{day:%Y%m%d}.nc'
+    tcwv: 'sfc_mean/total_column_water_vapour/{day:%Y}/total_column_water_vapour_{day:%Y%m%d}.nc'
+    tp: 'sfc_sum/total_precipitation/{day:%Y}/total_precipitation_{day:%Y%m%d}.nc'
+mapping:
+  coordinate_aliases:
+    valid_time: time
+    latitude: lat
+    longitude: lon
+    pressure_level: level
+  variables:
+    z: {source: z, source_unit: m**2 s**-2, unit: m2 s-2, temporal_kind: interval_mean}
+    t: {source: t, source_unit: K, unit: K, temporal_kind: interval_mean}
+    u: {source: u, source_unit: m s**-1, unit: m s-1, temporal_kind: interval_mean}
+    v: {source: v, source_unit: m s**-1, unit: m s-1, temporal_kind: interval_mean}
+    q: {source: q, source_unit: kg kg**-1, unit: kg kg-1, temporal_kind: interval_mean}
+    t2m: {source: t2m, source_unit: K, unit: K, temporal_kind: interval_mean}
+    d2m: {source: d2m, source_unit: K, unit: K, temporal_kind: interval_mean}
+    sst: {source: sst, source_unit: K, unit: K, temporal_kind: interval_mean}
+    ttr: {source: ttr, source_unit: J m**-2, unit: J m-2, temporal_kind: interval_accumulation}
+    u10m: {source: u10, source_unit: m s**-1, unit: m s-1, temporal_kind: interval_mean}
+    v10m: {source: v10, source_unit: m s**-1, unit: m s-1, temporal_kind: interval_mean}
+    u100m: {source: u100, source_unit: m s**-1, unit: m s-1, temporal_kind: interval_mean}
+    v100m: {source: v100, source_unit: m s**-1, unit: m s-1, temporal_kind: interval_mean}
+    msl: {source: msl, source_unit: Pa, unit: Pa, temporal_kind: interval_mean}
+    tcwv: {source: tcwv, source_unit: kg m**-2, unit: kg m-2, temporal_kind: interval_mean}
+    tp: {source: tp, source_unit: m, unit: m, temporal_kind: interval_accumulation}
+example: pl_mean/temperature/2026/temperature_20261104.nc
+notes: |-
+  Source root is raw/daily_1p5, prepared by run_fengshun_c76_daily.py.
+  Each file has one UTC daily statistic on the server-side 1.5 degree grid.
+  Means and tp/ttr daily sums are already computed; never accumulate again.
+  No previous-day boundary files, interpolation, unit conversion or filling in mapping.

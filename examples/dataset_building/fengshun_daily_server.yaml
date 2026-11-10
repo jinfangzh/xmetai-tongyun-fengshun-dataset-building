@@ -1,0 +1,10 @@
+# Server paths; confirm all five c76 / 1.5 degree auxiliary paths before use.
+source: /home/xmetai/era5_download/era5_fengshun_c76/raw/daily_1p5
+download_watermark: /home/xmetai/era5_download/era5_fengshun_c76/raw/_records/fengshun_c76_daily/watermark.json
+output_root: /home/xmetai/era5_download/era5_fengshun_c76/zarr
+report_dir: /home/xmetai/era5_download/era5_fengshun_c76/reports
+mean_nc: /home/xmetai/stats/fengshun_c76/mean.nc
+std_nc: /home/xmetai/stats/fengshun_c76/std.nc
+mask_nc: /home/xmetai/stats/fengshun_c76/mask.nc
+const_nc: /home/xmetai/stats/fengshun_c76/const.nc
+weight_npy: /home/xmetai/stats/fengshun_c76/weight.npy
