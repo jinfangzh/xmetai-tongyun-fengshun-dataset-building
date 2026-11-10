@@ -1,4 +1,4 @@
-"""Build normalized c76 / 1.5 degree daily products from prepared CDS statistics.
+"""Build normalized c76 / 1.5 degree daily products from downloaded CDS ZIPs.
 
 Daily means and sums are already computed by CDS. Read exactly one day,
 validate its native grid, pack channels, then reuse ERA5 unit transforms with
@@ -25,11 +25,11 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE_CONFIG = ROOT / "config/data_sources/era5_cds_fengshun_daily_raw.yaml"
 TARGET_SPEC = ROOT / "config/dataset_specs/s2s_c76_1p5_h24.yaml"
 IDENTITY_TEMPLATE = "s2s.{day:%Y%m%d}.c76.1p5.h24.v1"
-CANDIDATE_GLOB = "pl_mean/temperature/*/temperature_*.nc"
+CANDIDATE_GLOB = "pl_mean/temperature/*/temperature_*.zip"
 
 
 def required_files(source, day, description):
-    """Require the 16 prepared files for this UTC day, excluding .nc.part."""
+    """Require the 16 source ZIPs for this UTC day, excluding .zip.part."""
     source = Path(source).expanduser().resolve()
     required = []
     for template in description["layout"]["files"].values():
@@ -52,6 +52,10 @@ def read_source(source_path, description, *, spec):
         fields = []
         for variable, declaration in mapping.variables.items():
             value = raw[declaration.source].rename({f"time_{variable}": "time"})
+            # The source is now the service response, rather than a prepared NC.
+            # Normalize coordinate representation without interpolating values.
+            value = value.assign_coords(lon=value.lon % 360).sortby("lon")
+            value = value.sortby("lat", ascending=False)
             if not np.array_equal(value.time.values.astype("datetime64[ns]"), spec.expected_times()):
                 raise ValueError(f"{variable}: expected exactly the requested UTC daily timestamp")
             # pack_source_channels can reindex missing coordinates to NaN; here
@@ -75,7 +79,7 @@ def main(argv=None):
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--date", required=True, type=date.fromisoformat, help="UTC YYYY-MM-DD")
-    parser.add_argument("--source", required=True, type=Path, help="Downloader raw/daily_1p5 root")
+    parser.add_argument("--source", required=True, type=Path, help="Downloader raw/cds_daily_1p5 ZIP root")
     parser.add_argument("--destination", required=True, type=Path, help="New daily Zarr path")
     parser.add_argument("--report-dir", required=True, type=Path)
     parser.add_argument("--dataset-id", help="Default: s2s.YYYYMMDD.c76.1p5.h24.v1")

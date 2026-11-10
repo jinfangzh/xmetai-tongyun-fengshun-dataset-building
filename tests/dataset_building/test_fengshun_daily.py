@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import date, datetime, time, timedelta
 from functools import partial
 from pathlib import Path
+from zipfile import ZipFile
 
 import numpy as np
 import pytest
@@ -18,12 +19,17 @@ from examples.dataset_building import example_build_fengshun_daily as daily
 from pipelines.dataset import build_zarr
 
 
+def write_zip(path, dataset):
+    with ZipFile(path, "w") as archive:
+        archive.writestr(path.stem + ".nc", dataset.to_netcdf(engine="scipy"))
+
+
 @pytest.fixture
 def daily_input(tmp_path):
     description = io.get_description(daily.SOURCE_CONFIG)
     mapping = load_mapping(description)
     day = date(2026, 11, 4)
-    root = tmp_path / "raw" / "daily_1p5"
+    root = tmp_path / "raw" / "cds_daily_1p5"
     baseline, _ = load_schema(daily.TARGET_SPEC)
     grid = replace(baseline.variant.grid, latitude_count=2, longitude_count=2)
     product = replace(baseline.product, variants=(replace(baseline.variant, grid=grid, auxiliaries=()),))
@@ -45,7 +51,7 @@ def daily_input(tmp_path):
                              name=declaration.source, attrs={"units": declaration.source_unit})
         path = root / template.format(day=datetime.combine(day, time()))
         path.parent.mkdir(parents=True, exist_ok=True)
-        field.to_dataset().to_netcdf(path, engine="scipy")
+        write_zip(path, field.to_dataset())
     paths = {}
     channels = list(spec.product.channel_names)
     # Nonidentity statistics prove the existing normalization is applied once.
@@ -85,11 +91,11 @@ def test_daily_means_and_sums_build_normalized_c76_without_boundary(daily_input,
 def test_reader_rejects_wrong_timestamp_or_native_grid(daily_input, axis):
     root, day, description, spec, _ = daily_input
     for path, _ in daily.required_files(root, day, description):
-        with xr.open_dataset(path) as source:
+        with io.open(path).read() as source:
             altered = source.load()
         delta = np.timedelta64(6, "h") if axis == "time" else .25
         altered = altered.assign_coords({axis: altered[axis] + delta})
-        altered.to_netcdf(path, engine="scipy")
+        write_zip(path, altered)
     with pytest.raises(ValueError, match="UTC daily timestamp|native 1.5 degree grid"):
         daily.read_source(root, description, spec=spec)
 
@@ -97,7 +103,7 @@ def test_reader_rejects_wrong_timestamp_or_native_grid(daily_input, axis):
 def test_part_file_does_not_count_as_completed_input(daily_input):
     root, day, description, _, _ = daily_input
     path, _ = daily.required_files(root, day, description)[0]
-    path.rename(path.with_suffix(".nc.part"))
+    path.rename(path.with_suffix(".zip.part"))
     with pytest.raises(FileNotFoundError, match="incomplete"):
         daily.required_files(root, day, description)
 
@@ -165,7 +171,8 @@ def test_daily_cli_isolates_requested_day(daily_input, tmp_path, monkeypatch):
         stage = kwargs["source_path"]
         stages.append(stage)
         assert len(io.open(stage, description).discover(all_files=True)) == 16
-        assert all(p.is_symlink() for p in stage.rglob("*.nc"))
+        assert len(list(stage.rglob("*.zip"))) == 16
+        assert all(p.is_symlink() for p in stage.rglob("*.zip"))
         assert kwargs["dry_run"]
         assert kwargs["target_spec"] == daily.TARGET_SPEC
         assert kwargs["build_overrides"]["first_time"] == f"{day}T00:00"
@@ -181,7 +188,23 @@ def test_daily_cli_isolates_requested_day(daily_input, tmp_path, monkeypatch):
         args.extend([f"--{name}", str(tmp_path / name)])
     assert daily.main(args) == 0
     assert not stages[0].exists()
-    assert len(list(root.rglob("*.nc"))) == 16
+    assert len(list(root.rglob("*.zip"))) == 16
+    assert not list(root.rglob("*.nc"))
+
+
+def test_zip_reader_normalizes_coordinate_order_without_resampling(daily_input):
+    root, day, description, spec, _ = daily_input
+    for path, _ in daily.required_files(root, day, description):
+        with io.open(path).read() as source:
+            altered = source.load().sortby("lat")
+        # Same points represented as negative longitudes, not a different grid.
+        altered = altered.assign_coords(lon=altered.lon - 360).sortby("lon", ascending=False)
+        write_zip(path, altered)
+    with daily.read_source(root, description, spec=spec) as packed:
+        assert packed.data.shape == (1, 76, 2, 2)
+        lat, lon = spec.variant.grid.coordinates()
+        np.testing.assert_array_equal(packed.lat, lat)
+        np.testing.assert_array_equal(packed.lon, lon)
 
 
 def test_consumer_backfills_in_order_with_limit_and_watermark(daily_input, tmp_path, monkeypatch):
