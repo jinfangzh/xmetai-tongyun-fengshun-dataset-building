@@ -11,11 +11,30 @@ from datakit.transforms import compute_mean_std
 
 
 def load_external_array(path, variable):
-    """Load one auxiliary array completely before closing its source file."""
+    """Load an auxiliary; accept labeled legacy data(level) mean/std files."""
     if path is None:
         raise ValueError(f"An external {variable} path is required")
     with io.open(path).read(load=False) as source:
-        return source[variable].load()
+        if variable in source.data_vars:
+            value = source[variable]
+        elif variable in {"mean", "std"} and set(source.data_vars) == {"data"}:
+            value = source["data"]
+        else:
+            raise ValueError(f"{path}: expected auxiliary variable {variable!r}; found {list(source.data_vars)}")
+        if variable in {"mean", "std"}:
+            if value.dims == ("level",) and "level" in value.coords:
+                labels = value.level.values.tolist()
+                if not all(isinstance(label, (str, bytes)) for label in labels):
+                    raise ValueError(f"{path}: legacy level must contain channel names, not numeric levels")
+                labels = [label.decode("utf-8") if isinstance(label, bytes) else label for label in labels]
+                value = value.rename(level="channel").assign_coords(channel=labels)
+            if value.dims != ("channel",) or "channel" not in value.coords:
+                raise ValueError(f"{path}: {variable} must have a labeled one-dimensional channel axis")
+            labels = value.channel.values.tolist()
+            if (not labels or not all(isinstance(label, str) and label for label in labels)
+                    or not value.get_index("channel").is_unique):
+                raise ValueError(f"{path}: {variable} requires unique nonempty channel names")
+        return value.rename(variable).load()
 
 
 def prepare_statistics(data, spec, *, mean_path=None, std_path=None):
@@ -28,6 +47,11 @@ def prepare_statistics(data, spec, *, mean_path=None, std_path=None):
     mean = load_external_array(mean_path, "mean") if mean_path is not None else None
     std = load_external_array(std_path, "std") if std_path is not None else None
     channels = list(spec.product.channel_names)
+    for name, array, path in (("mean", mean, mean_path), ("std", std, std_path)):
+        if array is not None:
+            missing = [channel for channel in channels if channel not in array.channel.values]
+            if missing:
+                raise ValueError(f"{path}: {name} is missing target channels: {missing}")
     if mean is None or std is None:
         if not np.array_equal(data.time.values.astype("datetime64[ns]"), spec.expected_times()):
             raise ValueError("Source time coverage must exactly match target before computing statistics")

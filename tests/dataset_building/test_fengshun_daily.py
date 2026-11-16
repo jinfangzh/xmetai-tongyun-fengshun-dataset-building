@@ -87,6 +87,53 @@ def test_daily_means_and_sums_build_normalized_c76_without_boundary(daily_input,
     assert not output.exists()
 
 
+def test_legacy_data_level_statistics_match_canonical_c76_processing(daily_input, tmp_path):
+    root, _, description, spec, paths = daily_input
+    legacy = {}
+    for name in ("mean", "std"):
+        with xr.open_dataset(paths[name]) as source:
+            # Reverse order to prove selection uses labels, not positions.
+            value = source[name].load().isel(channel=slice(None, None, -1))
+        legacy[name] = tmp_path / f"legacy_{name}.nc"
+        value.rename(channel="level").rename("data").to_dataset().to_netcdf(legacy[name], engine="scipy")
+    with daily.read_source(root, description, spec=spec) as packed:
+        canonical = era5.process(packed, description, spec, mean_path=paths["mean"],
+                                 std_path=paths["std"], mask_path=paths["mask"],
+                                 source_stage="packed", accumulation_hours=24)
+        compatible = era5.process(packed, description, spec, mean_path=legacy["mean"],
+                                  std_path=legacy["std"], mask_path=paths["mask"],
+                                  source_stage="packed", accumulation_hours=24)
+        xr.testing.assert_allclose(compatible.compute(), canonical.compute())
+    report = build_zarr(description, spec, root, tmp_path / "result.zarr", read=daily.read_source,
+                        process=partial(era5.process, mean_path=legacy["mean"], std_path=legacy["std"],
+                                        mask_path=paths["mask"], source_stage="packed", accumulation_hours=24),
+                        dry_run=True)
+    assert report.coverage["conformance_passed"], report.to_dict()
+    assert not (tmp_path / "result.zarr").exists()
+
+
+@pytest.mark.parametrize("problem", ["numeric_levels", "duplicate_channels", "missing_channel", "ambiguous_variables"])
+def test_legacy_statistics_reject_ambiguous_or_incompatible_channels(daily_input, tmp_path, problem):
+    from pipelines.dataset.preparation import prepare_statistics
+
+    _, _, _, spec, paths = daily_input
+    with xr.open_dataset(paths["mean"]) as source:
+        value = source["mean"].load().rename(channel="level")
+    if problem == "numeric_levels":
+        value = value.assign_coords(level=np.arange(value.sizes["level"]))
+    elif problem == "duplicate_channels":
+        value = value.assign_coords(level=[str(value.level.values[0])] * value.sizes["level"])
+    elif problem == "missing_channel":
+        value = value.isel(level=slice(1, None))
+    dataset = value.rename("data").to_dataset()
+    if problem == "ambiguous_variables":
+        dataset["another"] = value
+    path = tmp_path / "invalid_mean.nc"
+    dataset.to_netcdf(path, engine="scipy")
+    with pytest.raises(ValueError, match="channel|expected auxiliary"):
+        prepare_statistics(None, spec, mean_path=path, std_path=paths["std"])
+
+
 @pytest.mark.parametrize("axis", ["time", "lat", "lon"])
 def test_reader_rejects_wrong_timestamp_or_native_grid(daily_input, axis):
     root, day, description, spec, _ = daily_input
