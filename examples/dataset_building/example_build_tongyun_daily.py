@@ -20,6 +20,7 @@ SOURCE_CONFIG = ROOT / "config/data_sources/era5_cds_daily_raw.yaml"
 TARGET_SPEC = ROOT / "config/dataset_specs/era5_c78_p25_h6.yaml"
 IDENTITY_TEMPLATE = "era5.{day:%Y%m%d}.c78.p25.h6.v1"
 CANDIDATE_GLOB = "pl_h6/temperature/*/temperature_*.nc"
+DOWNLOAD_PRODUCT = "tongyun_c78"
 
 
 def required_files(source, day, description):

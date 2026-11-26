@@ -7,6 +7,7 @@ Fengshun reuses discovery and publication with its own builder module.
 
 import argparse
 import json
+import re
 from datetime import date, datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -15,6 +16,8 @@ import yaml
 
 from datakit import io
 from examples.dataset_building import example_build_tongyun_daily as daily
+from examples.dataset_building.source_repairs import inspect_day, queue_for
+from datakit.runtime.daily_integrity import file_lock
 
 
 def read_watermark(path):
@@ -45,6 +48,11 @@ def load_config(path):
     for name in names:
         value = Path(config[name]).expanduser()
         config[name] = (value if value.is_absolute() else path.parent / value).resolve()
+    if 'repair_queue' in config:
+        if not isinstance(config['repair_queue'], str):
+            raise ValueError('repair_queue must be a path string')
+        value = Path(config['repair_queue']).expanduser()
+        config['repair_queue'] = (value if value.is_absolute() else path.parent / value).resolve()
     source, output = config["source"], config["output_root"]
     if source == output or source.is_relative_to(output) or output.is_relative_to(source):
         raise ValueError("source and output_root must not overlap")
@@ -57,13 +65,22 @@ def product_paths(config, day, *, builder=daily):
             config["output_root"] / "_completed" / f"{day:%Y%m%d}.json")
 
 
-def ready_days(config, latest, *, builder=daily):
+def ready_days(config, latest, *, builder=daily, write=False):
     description = io.get_description(builder.SOURCE_CONFIG)
     # Find local candidate dates, but never process beyond the download watermark.
     candidates = set()
-    for path in config["source"].glob(builder.CANDIDATE_GLOB):
+    patterns = [builder.CANDIDATE_GLOB]
+    if config.get('repair_queue'):
+        # Do not mistake Tongyun's preceding-day accumulation-only boundary
+        # files for another complete candidate day.
+        patterns = [re.sub(r'\{day:[^}]+\}', '*', template)
+                    for template in description['layout']['files'].values()
+                    if not template.startswith(('sfc_accum_h1/', 'sfc_sum/'))]
+        candidates.add(latest)
+    paths = {path for pattern in patterns for path in config['source'].glob(pattern)}
+    for path in paths:
         try:
-            candidate = datetime.strptime(path.stem, "temperature_%Y%m%d").date()
+            candidate = datetime.strptime(path.stem.rsplit('_', 1)[-1], "%Y%m%d").date()
         except ValueError:
             continue
         if candidate <= latest:
@@ -72,6 +89,10 @@ def ready_days(config, latest, *, builder=daily):
         _, destination, marker = product_paths(config, day, builder=builder)
         if marker.is_file() and destination.is_dir():
             print(f"SKIP {day}: already built", flush=True)
+            continue
+        if config.get('repair_queue') and inspect_day(config, day, builder, enqueue=write):
+            print(f'WAIT {day}: source repair required; '
+                  f'{"queued" if write else "dry-run, queue unchanged"}', flush=True)
             continue
         try:
             builder.required_files(config["source"], day, description)
@@ -82,13 +103,23 @@ def ready_days(config, latest, *, builder=daily):
 
 
 def run(config, *, write=False, max_days=1, builder=daily):
+    if config.get('repair_queue'):
+        queue = queue_for(config, builder)
+        # Do not let a download replace inputs while a build reads them.
+        # Download network transfer happens outside this lock.
+        with file_lock(queue.records / 'source.lock', exclusive=False):
+            return _run(config, write=write, max_days=max_days, builder=builder)
+    return _run(config, write=write, max_days=max_days, builder=builder)
+
+
+def _run(config, *, write=False, max_days=1, builder=daily):
     latest = read_watermark(config["download_watermark"])
     if latest is None:
         print(f"WAIT: no completed download day; watermark missing: {config['download_watermark']}", flush=True)
         return 0
     print(f"Download watermark: {latest}", flush=True)
     failures, attempted = 0, 0
-    for day in ready_days(config, latest, builder=builder):
+    for day in ready_days(config, latest, builder=builder, write=write):
         identity, destination, marker = product_paths(config, day, builder=builder)
         # Recheck at execution time in case a product was published since discovery.
         if marker.is_file() and destination.is_dir():

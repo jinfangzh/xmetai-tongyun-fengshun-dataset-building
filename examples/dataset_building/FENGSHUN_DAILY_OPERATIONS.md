@@ -137,3 +137,16 @@ ls /home/xmetai/era5_download/era5_fengshun_c76/zarr/_completed/
 
 `WAIT` 表示水位不存在或文件未齐，`BUILD` 表示开始，`READY` 表示已发布，
 `SKIP` 表示已经完成，`FAILED` 时查报告与 `_attempts`。
+# 源文件预检与自动补下载联动
+
+fengshun_daily_server.yaml新增repair_queue（watermark.json同目录下repairs），启用后
+在构建前检查当天16份ZIP的变量、准确UTC日期、13层（高层）、1.5°网格和整帧/整层缺测。
+不完整文件只登记具体变量的修复请求并等待，不进入Zarr写入；dry-run不登记修复。
+下载器下次启动优先补队列、逐变量验收并保留旧文件备份，修复成功后下一轮构建正常执行。
+与Tongyun共用v1修复队列协议，每个产品保留独立队列、水位和source.lock。
+每次默认修复4文件、每文件3次修复尝试、失败冷却6小时；blocked需人工排查后明确重置。
+不会自动增加cron频率。历史检查和修复不回退全局下载水位。
+
+需要同时更新下载和构建两份仓库（含datakit/runtime/daily_integrity.py）以及服务器YAML，
+原crontab调用保持不变。没有repair_queue的旧配置保留旧行为；已READY产品不自动覆盖。
+本步骤仅检查/修复源文件，仍使用原源契约、目标契约、归一化、命名和Quick发布条件。

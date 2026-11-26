@@ -26,6 +26,7 @@ SOURCE_CONFIG = ROOT / "config/data_sources/era5_cds_fengshun_daily_raw.yaml"
 TARGET_SPEC = ROOT / "config/dataset_specs/s2s_c76_1p5_h24.yaml"
 IDENTITY_TEMPLATE = "s2s.{day:%Y%m%d}.c76.1p5.h24.v1"
 CANDIDATE_GLOB = "pl_mean/temperature/*/temperature_*.zip"
+DOWNLOAD_PRODUCT = "fengshun_c76"
 
 
 def required_files(source, day, description):
